@@ -13,15 +13,15 @@ class MoConv(MessagePassing):
         # Attention mechanism
         self.attention_scaling = 8
         self.W_theta = Parameter(torch.zeros((int)(embedding_size/self.attention_scaling), embedding_size))
-        torch.nn.init.xavier_uniform_(self.W_theta)
+        torch.nn.init.xavier_uniform_(self.W_theta.data)
         self.W_phi = Parameter(torch.zeros((int)(embedding_size/self.attention_scaling), embedding_size))
-        torch.nn.init.xavier_uniform_(self.W_phi)
+        torch.nn.init.xavier_uniform_(self.W_phi.data)
 
         # Learnable up/down sampling operators and attention
         self.W_g = Parameter(torch.zeros(embedding_size, (int)(embedding_size/self.attention_scaling)))
-        torch.nn.init.xavier_uniform_(self.W_g)
+        torch.nn.init.xavier_uniform_(self.W_g.data)
         self.W_f = Parameter(torch.zeros((int)(embedding_size/self.attention_scaling), embedding_size))
-        torch.nn.init.xavier_uniform_(self.W_f)
+        torch.nn.init.xavier_uniform_(self.W_f.data)
 
     def forward(self, x, edge_index, edge_attr):
 
@@ -29,6 +29,9 @@ class MoConv(MessagePassing):
         return self.propagate(edge_index, x=x, x_ji=edge_attr)
 
     # TO-DO: Unsure how to get edge_ij to pass into the message function properly
+    # NOTE: Pretty sure this isn't correct, and most of the calculations should be done in forward()
+    # Check the example code in the tutorials here
+    # https://pytorch-geometric.readthedocs.io/en/latest/notes/colabs.html
     def message(self, x_j, edge_ij):
         # 1. Combine neightbor feature and edge feature
         cat = torch.cat([edge_ij, x_j], dim=1)
