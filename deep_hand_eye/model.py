@@ -121,11 +121,11 @@ class GCNet(nn.Module):
         self.gnn_layer = SimpleConvEdgeUpdate(
             node_feat_dim, edge_feat_dim, node_feat_dim)
 
-        # setup the absolute(?) pose regression networks
+        # setup the absolute(?-not sure why its needed) pose regression networks
         self.fc_xyz = nn.Linear(node_feat_dim, 3)
         self.fc_wpqr = nn.Linear(node_feat_dim, 3)
 
-        # setup the relative(?) pose regression networks
+        # setup the relative pose regression networks
         self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
         self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
@@ -140,27 +140,14 @@ class GCNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0)
 
-    def get_edge_node_features(self, x, edge_index):
-        # cannot follow this ????
+    def join_node_features(self, x, edge_index):
+        # join node features of a corresponding edge
         edge_feat = torch.cat(
             (x[torch.min(edge_index, 0)[0], ...],
              x[torch.max(edge_index, 0)[0], ...]),
             dim=1)
         # torch.testing.assert_allclose(edge_feat, edge_feat2)
         return edge_feat
-
-    def compute_RP(self, p, edge_index):
-        num_edges = edge_index.size(1)
-        RP = torch.zeros((num_edges, p.size(1)),
-                         requires_grad=True).to(self.device)
-
-        for i in range(num_edges):
-            nodes = edge_index[:, i]
-            node_s = nodes[0]
-            node_t = nodes[1]
-            RP[i] = p[node_s] - p[node_t]
-
-        return RP
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
@@ -169,28 +156,23 @@ class GCNet(nn.Module):
         x = self.feature_extractor(x)
 
         # Compute edge features
-        edge_node_feat = self.get_edge_node_features(x, edge_index)
+        edge_node_feat = self.join_node_features(x, edge_index)
         edge_feat = self.proj_init_edge(edge_node_feat)
         edge_feat = F.relu(edge_feat)
 
-        for r in range(self.gnn_recursion):
-            if r == 0:
-                x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
-                x = F.relu(x)
-                edge_feat = F.relu(edge_feat)
-            else:
-                x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
-                x = F.relu(x)
-                edge_feat = F.relu(edge_feat)
+        # Graph message passing step
+        for _ in range(self.gnn_recursion):
+            x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
+            x = F.relu(x)
+            edge_feat = F.relu(edge_feat)
 
+        # Drop node and edge features if necessary
         if self.droprate > 0:
             x = F.dropout(x, p=self.droprate)
             edge_feat = F.dropout(edge_feat, p=self.droprate)
 
-        xyz = self.fc_xyz(x)
-        wpqr = self.fc_wpqr(x)
-
+        # Predict the relative pose between images
         xyz_R = self.fc_xyz_R(edge_feat)
         wpqr_R = self.fc_wpqr_R(edge_feat)
 
-        return torch.cat((xyz, wpqr), 1), torch.cat((xyz_R, wpqr_R), 1), edge_index
+        return torch.cat((xyz_R, wpqr_R), 1), edge_index
