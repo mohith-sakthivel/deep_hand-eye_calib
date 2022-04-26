@@ -158,7 +158,7 @@ class MVSDataset(Dataset):
             cam_poses.append(abs_pose)
 
             # Use inverse of hand-eye matrix to get end effector pose
-            ee_pose = hand_eye_inv @ abs_pose
+            ee_pose = abs_pose @ hand_eye_inv
             ee_poses.append(ee_pose)
 
         # Loop through randomly sampled positions
