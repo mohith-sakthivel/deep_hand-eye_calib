@@ -1,14 +1,10 @@
-from dataloader import dataloader
+from dataloader import MVSDataset
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-dataset = dataloader()
+dataset = MVSDataset()
 
-train_loader = DataLoader(dataset, batch_size=2)
+train_loader = DataLoader(dataset, batch_size=500)
 data = next(iter(train_loader))
-print(data['images'].shape)
-plt.imshow(data['images'][0][0].permute(1, 2, 0))
-print(data['hand_eye'])
-print(data['transforms'])
 
 input('')
