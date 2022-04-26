@@ -58,7 +58,7 @@ class MVSDataset(Dataset):
             image_list : list of images corresponding to those sampled from the given scene
             transforms : nxnx7 tensor capturing relative transforms between n sampled images
                          each entry contains 7 dim vector: [translation (1x3) | quaternion (1x4)]
-                         [x y z | x y z w]
+                         [x y z | w x y z]
             hand_eye : hand eye translation vector used to generate data
         """
         ### Hand-eye transform matrix
@@ -91,7 +91,8 @@ class MVSDataset(Dataset):
         # Create ground truth 7-sized vector of the hand-eye calibration
         hand_eye = np.empty(7)
         hand_eye[:3] = hand_trans
-        hand_eye[3:] = R.from_matrix(hand_rotation).as_quat()
+        hand_eye[3] = R.from_matrix(hand_rotation).as_quat()[3]
+        hand_eye[4:] = R.from_matrix(hand_rotation).as_quat()[:3]
         
         ### Get 5 images of a randomized brightness
         image_list = []
@@ -132,7 +133,7 @@ class MVSDataset(Dataset):
             ee_poses.append(ee_pose)
 
         # Loop through randomly sampled positions
-        # Format is [x y z | x y z w] for [translation | rotation]
+        # Format is [x y z | w x y z] for [translation | rotation]
         for from_idx in range(self.num_nodes):
             for to_idx in range(self.num_nodes):
                 # if relative to itself
@@ -148,7 +149,8 @@ class MVSDataset(Dataset):
                     rel_rotation_quaternion = rotation.as_quat()
                     # Populate relative transforms matrix
                     relative_transforms[from_idx, to_idx, :3] = rel_translation
-                    relative_transforms[from_idx, to_idx, 3:] = rel_rotation_quaternion
+                    relative_transforms[from_idx, to_idx, 3] = rel_rotation_quaternion[3]
+                    relative_transforms[from_idx, to_idx, 4:] = rel_rotation_quaternion[:3]
 
         # Turn into a tensor
         relative_transforms = torch.from_numpy(relative_transforms)
