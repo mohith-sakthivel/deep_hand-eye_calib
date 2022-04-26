@@ -43,7 +43,10 @@ class dataloader(Dataset):
         self.image_format = ['rect_{}_0_r5000.png', 'rect_{}_1_r5000.png', 'rect_{}_2_r5000.png',
                             'rect_{}_3_r5000.png', 'rect_{}_4_r5000.png', 'rect_{}_5_r5000.png',
                             'rect_{}_6_r5000.png', 'rect_{}_max.png']
-    
+
+        # Create edge index tensor
+        self.edge_index = edge_idx_gen(self.num_nodes)
+        
     def __len__(self):
         return len(self.scans)
 
@@ -155,3 +158,17 @@ class dataloader(Dataset):
             'transforms': relative_transforms,
             'hand_eye': hand_eye
         }
+
+def edge_idx_gen(num_nodes):
+    edge_index_top = np.zeros((1,num_nodes*(num_nodes-1)))
+    for i in range(num_nodes):
+        edge_index_top[0, i*(num_nodes-1):(i+1)*(num_nodes-1)] = i
+    edge_index_low = np.zeros_like(edge_index_top)
+    idx = 0
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if i != j:
+                edge_index_low[0,j+i*(num_nodes-1)] = j
+                idx += 1
+    edge_index = torch.tensor(np.stack([edge_index_top, edge_index_low], dim=0))
+    return edge_index
