@@ -163,6 +163,7 @@ class MVSDataset(Dataset):
             'hand_eye': hand_eye
         }
 
+# Generates the top and bottom array of edge indices separately and stacks them
 def edge_idx_gen(num_nodes):
     edge_index_top = np.zeros((1,num_nodes*(num_nodes-1)))
     for i in range(num_nodes):
