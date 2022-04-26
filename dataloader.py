@@ -10,9 +10,10 @@ from scipy.spatial.transform import Rotation as R
 from torch.utils.data import Dataset
 
 
-class dataloader(Dataset):
-    def __init__(self, image_folder='SampleSet/MVS Data/Rectified/', json_file='camera_pose.json', 
-                    num_nodes=5, translation=0.1, rotation=0, transform=None):
+class MVSDataset(Dataset):
+    def __init__(self, image_folder="Data/DTU_MVS_2014/Rectified/",
+                 json_file="Data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
+                 max_trans_offset=0.1, max_rot_offset=0, transform=None, image_size=(256, 256)):
         # Storing the image folder
         self.image_folder = image_folder
 
@@ -29,12 +30,13 @@ class dataloader(Dataset):
         self.camera_positions = json.load(open(json_file, 'r'))
 
         # Translational and rotational magnitude
-        self.translation = translation
-        self.rotation = rotation
+        self.max_trans_offset = max_trans_offset
+        self.max_rot_offset = max_rot_offset
 
         if transform == None:
             self.transform = transforms.Compose([
-                transforms.PILToTensor()
+                transforms.Resize(image_size),
+                transforms.PILToTensor(),
             ])
         else:
             self.transform = transform
@@ -48,19 +50,19 @@ class dataloader(Dataset):
         return len(self.scans)
 
     def __getitem__(self, id):
-        '''
+        """
         returns:
             image_list : list of images corresponding to those sampled from the given scene
             transforms : nxnx7 tensor capturing relative transforms between n sampled images
                          each entry contains 7 dim vector: [translation (1x3) | quaternion (1x4)]
                          [x y z | x y z w]
             hand_eye : hand eye translation vector used to generate data
-        '''
+        """
         ### Hand-eye transform matrix
         # Random translational offset
-        hand_offset = np.random.uniform(-self.translation, self.translation, 3)
+        hand_trans = np.random.uniform(-self.max_trans_offset, self.max_trans_offset, 3)
         # Random rotational angle
-        hand_rpy = np.random.uniform(-self.rotation, self.rotation, 3)
+        hand_rpy = np.random.uniform(-self.max_rot_offset, self.max_rot_offset, 3)
         # Roll matrix
         hand_roll = np.array([[1, 0, 0],
                             [0, np.cos(hand_rpy[0]), -np.sin(hand_rpy[0])],
@@ -77,15 +79,15 @@ class dataloader(Dataset):
         hand_rotation = hand_yaw @ hand_pitch @ hand_roll
 
         # Hand-eye transformation matrix
-        hand_eye_transform = np.zeros((4,4))
-        hand_eye_transform[:3,3] = hand_offset
-        hand_eye_transform[:3,:3] = hand_rotation
-        hand_eye_transform[3,3] = 1
+        hand_eye_matrix = np.zeros((4,4))
+        hand_eye_matrix[:3,3] = hand_trans
+        hand_eye_matrix[:3,:3] = hand_rotation
+        hand_eye_matrix[3,3] = 1
         # Get inverse to multiply onto absolute positions
-        hand_eye_inv = np.linalg.pinv(hand_eye_transform)
+        hand_eye_inv = np.linalg.pinv(hand_eye_matrix)
         # Create ground truth 7-sized vector of the hand-eye calibration
         hand_eye = np.empty(7)
-        hand_eye[:3] = hand_offset
+        hand_eye[:3] = hand_trans
         hand_eye[3:] = R.from_matrix(hand_rotation).as_quat()
         
         ### Get 5 images of a randomized brightness

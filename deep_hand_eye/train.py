@@ -39,8 +39,8 @@ class Trainer(object):
         self.train_dataloader = None
         self.config = config
 
-        self.srx = 0.0  # initial relative translation coeff
-        self.srq = -3 # initial relative rotation coeff
+        self.srx = 0.0  # initial relative translation loss coeff
+        self.srq = -3   # initial relative rotation loss coeff
         self.weight_decay = 0.0005 
         self.lr = 5e-5 
         self.lr_decay = 0.1 # learning rate decay factor
