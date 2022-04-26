@@ -1,113 +1,156 @@
-import numpy as np
 import json
 import os
-from PIL import Image
-import torchvision.transforms as transforms
 import torch
+import random
+import numpy as np
+import torchvision.transforms as transforms
+from PIL import Image
+from glob import glob
 from scipy.spatial.transform import Rotation as R
+from torch.utils.data import Dataset
 
-class dataloader:
-    def __init__(self, data_folder, data_file, image_folder):
-        
-        # inverse of the transform from eye to hand 
-        # (negating the translation of the camera to arrive at hand frame)
-        self.hand_eye_transform_inv = np.zeros((3,4))
-        self.hand_eye_transform_inv[0,0] = 1
-        self.hand_eye_transform_inv[1,1] = 1
-        self.hand_eye_transform_inv[2,2] = 1
 
+class dataloader(Dataset):
+    def __init__(self, image_folder='SampleSet/MVS Data/Rectified/', json_file='camera_pose.json', 
+                    num_nodes=5, translation=0.1, rotation=0, transform=None):
+        # Storing the image folder
         self.image_folder = image_folder
 
+        # Initialize idx used to loop through the folders
+        self.folder_idx = 0
 
+        # Get all scene names
+        self.scans = os.listdir(image_folder)
+        
+        # Number of nodes in the graph
+        self.num_nodes = int(num_nodes)
 
-        self.camera_positions = json.load(open(data_folder + data_file, 'r'))
+        # Camera positions dictionary
+        self.camera_positions = json.load(open(json_file, 'r'))
 
-    def __getitem__(self, idx):
+        # Translational and rotational magnitude
+        self.translation = translation
+        self.rotation = rotation
 
+        if transform == None:
+            self.transform = transforms.Compose([
+                transforms.PILToTensor()
+            ])
+        else:
+            self.transform = transform
+
+        # Image formats for the different brightnesses
+        self.image_format = ['rect_{}_0_r5000.png', 'rect_{}_1_r5000.png', 'rect_{}_2_r5000.png',
+                            'rect_{}_3_r5000.png', 'rect_{}_4_r5000.png', 'rect_{}_5_r5000.png',
+                            'rect_{}_6_r5000.png', 'rect_{}_max.png']
+    
+    def __len__(self):
+        return len(self.scans)
+
+    def __getitem__(self, id):
         '''
-        inputs:
-            idx: scene id
         returns:
-            idx: scene id
-            imagelist : list of images corresponding to those sampled from the given scene
-            transforms : nxnx7 tensor capturing relative transforms between n sampled images (in this case currently hardoded as 5)
-                         each entry contains 7 dim vector: [quaternion (1x4) | translation (1x3)]
-            hand_eye_transform : hand eye translation vector used to generate data
+            image_list : list of images corresponding to those sampled from the given scene
+            transforms : nxnx7 tensor capturing relative transforms between n sampled images
+                         each entry contains 7 dim vector: [translation (1x3) | quaternion (1x4)]
+                         [x y z | x y z w]
+            hand_eye : hand eye translation vector used to generate data
         '''
-        # list of images corresponding to the samples taken from the chosen scene
-        imagelist = []
-        
-        # creating a random vector to emulate hand-eye transform
-        # currently imposing it to be a pure translation from the hand
-        hand_offset = np.random((3,1))*50
+        ### Hand-eye transform matrix
+        # Random translational offset
+        hand_offset = np.random.uniform(-self.translation, self.translation, 3)
+        # Random rotational angle
+        hand_rpy = np.random.uniform(-self.rotation, self.rotation, 3)
+        # Roll matrix
+        hand_roll = np.array([[1, 0, 0],
+                            [0, np.cos(hand_rpy[0]), -np.sin(hand_rpy[0])],
+                            [0, np.sin(hand_rpy[0]), np.cos(hand_rpy[0])]])
+        # Pitch matrix
+        hand_pitch = np.array([[np.cos(hand_rpy[1]), 0, np.sin(hand_rpy[1])],
+                            [0, 1, 0],
+                            [-np.sin(hand_rpy[1]), 0, np.cos(hand_rpy[1])]])
+        # Yaw matrix
+        hand_yaw = np.array([[np.cos(hand_rpy[2]), -np.sin(hand_rpy[2]), 0],
+                            [np.sin(hand_rpy[2]), np.cos(hand_rpy[2]), 0],
+                            [0, 0, 1]])
+        # Combined rotational matrix
+        hand_rotation = hand_yaw @ hand_pitch @ hand_roll
 
-        # computing the inverse of the translation from eye to hand frame
-        self.hand_eye_transform_inv[:,-1] = -hand_offset
-
-        folder = self.image_folder + "/scan" + str(idx)
-        files = os.listdir(folder)
-
-        # conatins a table of all relative transforms
-        # currently hardcoded for 5 sampled images fromt he scene
-        # TODO: update to generalize to any number of sampled images
-        relative_transforms = torch.zeros(5,5,7)
+        # Hand-eye transformation matrix
+        hand_eye_transform = np.zeros((4,4))
+        hand_eye_transform[:3,3] = hand_offset
+        hand_eye_transform[:3,:3] = hand_rotation
+        hand_eye_transform[3,3] = 1
+        # Get inverse to multiply onto absolute positions
+        hand_eye_inv = np.linalg.pinv(hand_eye_transform)
+        # Create ground truth 7-sized vector of the hand-eye calibration
+        hand_eye = np.empty(7)
+        hand_eye[:3] = hand_offset
+        hand_eye[3:] = R.from_matrix(hand_rotation).as_quat()
         
-        # caputing the end effector translation and rotations in each scene in the lists below  (end effector with hand eye offset compensated for)
-        # for later use while computing relative transform quaternion and translation
-        frame_translations = []
-        frame_rotations = []
-        
-        
-        # currently sampling 5 uniformly spaced images from the list of 49 for images to be used for one scene
-        # TODO: random sampling from all 49 poses without replacement to generate the set of training images for one scene
-        for i in range(0,50,10):
-            filepath = os.path.join(folder)
-            image = Image.open(filepath + files[i]).convert('RGB')
-            image = transforms.ToTensor(image)
-            imagelist.append(image)
+        ### Get 5 images of a randomized brightness
+        image_list = []
+        # Set folder directory 
+        folder = self.image_folder + self.scans[self.folder_idx % len(self.scans)] + '/'
+        # Choose the brightness
+        img_format = random.choice(self.image_format)
+        # Find all images in the current scene with the selected brightness
+        image_names = glob(folder + img_format.format('*'))
+        # Sample N images = num_nodes
+        index_list = random.sample(range(len(image_names)), self.num_nodes)
+        # For each sampled index, get the image and append as a tensor
+        for idx in index_list:
+            # +1 because the dataset is 1-base rather than 0-base like Python indexing
+            img_id = f'{idx+1:0>3}'
+            file_name = folder + img_format.format(img_id)
+            image = Image.open(file_name).convert('RGB')
+            image = self.transform(image)
+            image_list.append(image)
 
-            # load pose of camera for given idx image from json
+        # Initialize table for all relative transforms
+        relative_transforms = np.zeros((self.num_nodes, self.num_nodes, 7))
+        # List of end effector poses
+        ee_poses = []
+        # Obtain absolute end effector pose from the JSON file
+        for idx in index_list:
+            # Camera pose components from JSON
             abs_translation = np.array(self.camera_positions['pose']['trans'][idx])
             abs_rotation = np.array(self.camera_positions['pose']['rot'][idx])
+            # Camera pose matrix
+            abs_pose = np.zeros((4,4))
+            abs_pose[:3,:3] = abs_rotation
+            abs_pose[:3,3] = abs_translation.T
+            abs_pose[3,3] = 1
+            # Use inverse of hand-eye matrix to get end effector pose
+            ee_pose = hand_eye_inv @ abs_pose
+            ee_poses.append(ee_pose)
 
-            # computation of end effector pose by removing the hand-eye offset being done below
-            abs_pose = np.zeros(3,4)
-            abs_pose[:,3] = abs_rotation
-            abs_pose[:,-1] = abs_translation
-
-            # end effector pose without camera
-            end_effector_pose = self.hand_eye_transform_inv @ abs_pose
-
-            frame_rotations.append(end_effector_pose[:3,:3])
-            frame_translations.append(end_effector_pose[:3,-1])
-            
-        # iterating over all end effector poses to find relative transforms and populate relative_transform matrix
-        for i in range(len(frame_translations)):
-            for j in range(len(frame_rotations)):
-
-                rel_transform = np.zeros(7)
-                
-                if i == j:
-                    rel_rotation = np.eye(3)
-                    rel_translation = np.zeros(3)
+        # Loop through randomly sampled positions
+        # Format is [x y z | x y z w] for [translation | rotation]
+        for from_idx in range(self.num_nodes):
+            for to_idx in range(self.num_nodes):
+                # if relative to itself
+                if from_idx == to_idx:
+                    relative_transforms[from_idx, to_idx, :-1] = 0
+                    relative_transforms[from_idx, to_idx, -1] = 1
+                # If relative to another position
                 else:
-                    rel_rotation = frame_rotations[i].T @ frame_rotations[j]
-                    rel_translation = frame_translations[j] - frame_translations[i]
+                    rel_rotation = ee_poses[from_idx][:3,:3].T @ ee_poses[to_idx][:3,:3]
+                    rel_translation = ee_poses[to_idx][:3,3] - ee_poses[from_idx][:3,3]
+                    # Obtain quaternion from relative rotation
+                    rotation = R.from_matrix(rel_rotation)
+                    rel_rotation_quaternion = rotation.as_quat()
+                    # Populate relative transforms matrix
+                    relative_transforms[from_idx, to_idx, :3] = rel_translation
+                    relative_transforms[from_idx, to_idx, 3:] = rel_rotation_quaternion
 
-                rotation = R.from_matrix(rel_rotation)
-                rel_rotation_quaternion = rotation.as_quat()
+        # Turn into a tensor
+        relative_transforms = torch.from_numpy(relative_transforms)
+        hand_eye = torch.from_numpy(hand_eye)
 
-                rel_transform[:4] = rel_rotation_quaternion
-                rel_transform[4:] = rel_translation
-
-                relative_transforms[i][j] = torch.from_numpy(rel_transform)
-
-
-
-
+        # Return as a dictionary
         return {
-            'idx': idx,
-            'images': imagelist,
+            'images': image_list,
             'transforms': relative_transforms,
-            'hand_eye_transform': hand_offset
+            'hand_eye': hand_eye
         }
