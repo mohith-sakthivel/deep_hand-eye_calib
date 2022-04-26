@@ -106,6 +106,7 @@ class dataloader(Dataset):
             image = Image.open(file_name).convert('RGB')
             image = self.transform(image)
             image_list.append(image)
+        image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
         relative_transforms = np.zeros((self.num_nodes, self.num_nodes, 7))
