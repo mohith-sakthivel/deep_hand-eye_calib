@@ -17,6 +17,7 @@ class PoseNetCriterion(nn.Module):
         :param targ: N x 7
         :return:
         """
+        # TODO: convert to log quaternion
         s = pred.size()
         if len(s) == 3:
             pred = pred.view(-1, *s[2:])

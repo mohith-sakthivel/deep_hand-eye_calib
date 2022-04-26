@@ -14,6 +14,9 @@ class SimpleEdgeModel(nn.Module):
     def __init__(self, in_channels, edge_channels, out_channels):
         super().__init__()
         self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.edge_channels = edge_channels
+
         self.edge_mlp = nn.Sequential(
             nn.Linear(2 * in_channels + edge_channels, out_channels),
             nn.ReLU(),
@@ -21,7 +24,7 @@ class SimpleEdgeModel(nn.Module):
         )
 
     def forward(self, source, target, edge_attr):
-        out = torch.cat([source, target, edge_attr], dim=1).contiguous()
+        out = torch.cat([edge_attr, source, target], dim=1).contiguous()
         out = self.edge_mlp(out)
         return out
 
