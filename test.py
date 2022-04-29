@@ -10,6 +10,7 @@ data = next(iter(train_loader))
 ee_pose = data['ee_transforms'][0,0,1]
 cam_pose = data['cam_transforms'][0,0,1]
 hand_eye = data['hand_eye'][0]
+
 print(ee_pose)
 print(cam_pose)
 print(hand_eye)
