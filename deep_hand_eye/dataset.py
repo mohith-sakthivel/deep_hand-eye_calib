@@ -4,6 +4,7 @@ import torch
 import random
 import numpy as np
 import torchvision.transforms as transforms
+from torch_geometric.data import Data
 from PIL import Image
 from glob import glob
 from scipy.spatial.transform import Rotation as R
@@ -36,7 +37,9 @@ class MVSDataset(Dataset):
         if transform == None:
             self.transform = transforms.Compose([
                 transforms.Resize(image_size),
-                transforms.PILToTensor(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
             ])
         else:
             self.transform = transform
@@ -206,31 +209,38 @@ class MVSDataset(Dataset):
         relative_ee_transforms = torch.from_numpy(relative_ee_transforms)
         hand_eye = torch.from_numpy(hand_eye)
 
-        # Return as a dictionary
-        return {
-            'images': image_list,
-            'ee_transforms': relative_ee_transforms,
-            'cam_transforms': relative_cam_transforms,
-            'hand_eye': hand_eye
-        }
+        print(self.edge_index.shape)
 
-# Generates the top and bottom array of edge indices separately and stacks them
+        # Create graph to return
+        graph = Data(x=image_list, edge_index=self.edge_index, edge_attr=relative_ee_transforms,
+                    y=hand_eye, y_edge=relative_cam_transforms)
+
+        # Return as a dictionary
+        return graph
+
+
 def edge_idx_gen(num_nodes):
-    edge_index_top = np.zeros((1,num_nodes*(num_nodes-1)))
+    edge_index_top = np.zeros(num_nodes*(num_nodes-1))
+    """
+    Generates the top and bottom array of edge indices separately and stacks them
+    """
     for i in range(num_nodes):
-        edge_index_top[0, i*(num_nodes-1):(i+1)*(num_nodes-1)] = i
+        edge_index_top[i*(num_nodes-1):(i+1)*(num_nodes-1)] = i
     edge_index_low = np.zeros_like(edge_index_top)
-    index_idx = 0
     for i in range(num_nodes):
+        index_idx = 0
         for j in range(num_nodes):
             if i != j:
-                edge_index_low[0,j+i*(num_nodes-1)] = j
+                edge_index_low[index_idx+i*(num_nodes-1)] = j
                 index_idx += 1
     edge_index = torch.tensor(np.stack([edge_index_top, edge_index_low]))
     return edge_index
 
-# Generates the unique mapping between every idx and the 
+
 def idx_to_img_map(image_folder):
+    """
+    Generates the unique mapping between every idx and the folder-image name index
+    """
     # Find all scene folders
     scans = os.listdir(image_folder)
     img_list = []
@@ -241,10 +251,6 @@ def idx_to_img_map(image_folder):
         img_names = os.listdir(scan_dir)
         for img_idx in range(len(img_names)):
             img_list.append((scan_idx, img_idx))
-    
-    # Randomize list
-    random.shuffle(img_list)
 
     # Return randomized list
     return img_list
-
