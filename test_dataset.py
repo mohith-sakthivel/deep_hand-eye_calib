@@ -1,4 +1,4 @@
-from dataloader import MVSDataset
+from deep_hand_eye.dataset import MVSDataset
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 

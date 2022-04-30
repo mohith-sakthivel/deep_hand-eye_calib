@@ -4,12 +4,12 @@ import torch.nn as nn
 
 class PoseNetCriterion(nn.Module):
     def __init__(self, trans_loss=nn.L1Loss(), quat_loss=nn.L1Loss(),
-                 sax=0, saq=0, learn_beta=True):
+                 beta=0, gamma=0, learn_beta=True):
         super().__init__()
         self.trans_loss = trans_loss
         self.quat_loss = quat_loss
-        self.sax = nn.Parameter(torch.Tensor([sax]), requires_grad=learn_beta)
-        self.saq = nn.Parameter(torch.Tensor([saq]), requires_grad=learn_beta)
+        self.beta = nn.Parameter(torch.Tensor([beta]), requires_grad=learn_beta)
+        self.gamma = nn.Parameter(torch.Tensor([gamma]), requires_grad=learn_beta)
 
     def forward(self, pred, targ):
         """
@@ -24,8 +24,8 @@ class PoseNetCriterion(nn.Module):
             targ = targ.view(-1, *s[2:])
         t_loss = self.trans_loss(pred[..., :3], targ[..., :3])
         q_loss = self.quat_loss(pred[..., 3:], targ[..., 3:])
-        sax_exp = torch.exp(-self.sax)
-        saq_exp = torch.exp(-self.saq)
-        loss = sax_exp * t_loss + self.sax + \
-               saq_exp * q_loss + self.saq
+        beta_exp = torch.exp(-self.beta)
+        gamma_exp = torch.exp(-self.gamma)
+        loss = beta_exp * t_loss + self.beta + \
+               gamma_exp * q_loss + self.gamma
         return loss, t_loss, q_loss
