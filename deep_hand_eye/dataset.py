@@ -99,6 +99,7 @@ class MVSDataset(Dataset):
         hand_eye[:3] = hand_trans
         hand_eye[3] = R.from_matrix(hand_rotation).as_quat()[3]
         hand_eye[4:] = R.from_matrix(hand_rotation).as_quat()[:3]
+        hand_eye[3:] *= np.sign(hand_eye[3])  # constrain to hemisphere
 
         ### Get 5 images of a randomized brightness
         image_list = []
@@ -183,6 +184,7 @@ class MVSDataset(Dataset):
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
                     rel_rotation_quaternion = rotation.as_quat()
+                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
                     # Populate relative transforms matrix
                     relative_ee_transforms[transform_idx, :3] = rel_translation
                     relative_ee_transforms[transform_idx, 3] = rel_rotation_quaternion[3]
@@ -194,6 +196,7 @@ class MVSDataset(Dataset):
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
                     rel_rotation_quaternion = rotation.as_quat()
+                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
                     # Populate relative transforms matrix
                     relative_cam_transforms[transform_idx, :3] = rel_translation
                     relative_cam_transforms[transform_idx, 3] = rel_rotation_quaternion[3]

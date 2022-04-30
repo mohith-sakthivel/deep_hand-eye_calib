@@ -67,9 +67,9 @@ class Trainer(object):
 
         # Define loss
         self.train_criterion_R = PoseNetCriterion(
-            sax=self.beta_loss_coeff, saq=self.gamma_loss_coeff, learn_beta=True).to(self.device)
+            beta=self.beta_loss_coeff, gamma=self.gamma_loss_coeff, learn_beta=True).to(self.device)
         self.train_criterion_he = PoseNetCriterion(
-            sax=self.beta_loss_coeff, saq=self.gamma_loss_coeff, learn_beta=True).to(self.device)
+            beta=self.beta_loss_coeff, gamma=self.gamma_loss_coeff, learn_beta=True).to(self.device)
         self.val_criterion = PoseNetCriterion().to(self.device)
 
         # Define optimizer
@@ -101,9 +101,8 @@ class Trainer(object):
 
                 pred_he, pred_R, edge_index = self.model(data.to(self.device))
 
-                loss_R = self.train_criterion_R(
-                    pred_R.view(1, pred_R.size(0), pred_R.size(1)),
-                    target_R.view(1, target_R.size(0), target_R.size(1)))
+                loss_R = self.train_criterion_R(pred_R, target_R)
+                loss_he = self.train_criterion_he(pred_he, target_he)
 
                 loss_total = loss_R[0]
 
