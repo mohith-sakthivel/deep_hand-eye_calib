@@ -12,8 +12,8 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 class MVSDataset(Dataset):
-    def __init__(self, image_folder="Data/DTU_MVS_2014/Rectified/",
-                 json_file="Data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
+    def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
+                 json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
                  max_trans_offset=0.3, max_rot_offset=0.6, transform=None, image_size=(256, 256)):
         # Storing the image folder
         self.image_folder = image_folder
@@ -69,7 +69,8 @@ class MVSDataset(Dataset):
         """
         ### Hand-eye transform matrix
         # Random translational offset
-        hand_trans = np.random.uniform(-self.max_trans_offset, self.max_trans_offset, 3)
+        hand_trans = np.random.uniform(0, 1, 3)
+        hand_trans = self.max_trans_offset * hand_trans/np.linalg.norm(hand_trans)
         # Random rotational angle
         hand_rpy = np.random.uniform(-self.max_rot_offset, self.max_rot_offset, 3)
         # Roll matrix
@@ -210,8 +211,6 @@ class MVSDataset(Dataset):
         relative_ee_transforms = torch.from_numpy(relative_ee_transforms)
         relative_cam_transforms = torch.from_numpy(relative_cam_transforms)
         hand_eye = torch.from_numpy(hand_eye)
-
-        print(self.edge_index.shape)
 
         # Create graph to return
         graph = Data(x=image_list, edge_index=self.edge_index, edge_attr=relative_ee_transforms,

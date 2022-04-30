@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 dataset = MVSDataset(max_rot_offset=0)
 
-train_loader = DataLoader(dataset, batch_size=1)
+train_loader = DataLoader(dataset, batch_size=8)
 data = next(iter(train_loader))
 
 print(data.edge)
