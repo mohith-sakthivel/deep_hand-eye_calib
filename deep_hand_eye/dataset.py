@@ -71,7 +71,7 @@ class MVSDataset(Dataset):
             hand_eye : hand eye translation vector used to generate data
         """
         # Random hand-eye transform matrix
-        trans_vec = np.random.uniform(0, 1, 3)
+        trans_vec = np.random.uniform(-1, 1, 3)
         trans_vec = trans_vec / np.linalg.norm(trans_vec)
         hand_trans = np.random.uniform(0, self.max_trans_offset) * trans_vec
         # Random rotational angle
@@ -157,7 +157,7 @@ class MVSDataset(Dataset):
             # Camera pose matrix
             abs_pose = np.zeros((4, 4))
             abs_pose[:3, :3] = abs_rotation
-            abs_pose[:3, 3] = abs_translation.T
+            abs_pose[:3, 3] = abs_translation
             abs_pose[3, 3] = 1
 
             # Append camera pose
@@ -182,7 +182,7 @@ class MVSDataset(Dataset):
                 rel_ee_transforms[edge_idx] = p_utils.homo_to_quat(rel_ee)
 
                 # For the camera pose
-                rel_cam = p_utils.invert_homo(cam_poses[from_idx].T) @ cam_poses[to_idx]
+                rel_cam = p_utils.invert_homo(cam_poses[from_idx]) @ cam_poses[to_idx]
                 rel_cam_transforms[edge_idx] = p_utils.homo_to_quat(rel_cam)
 
                 # Increment index to store transformations
@@ -198,7 +198,7 @@ class MVSDataset(Dataset):
                      edge_index=self.edge_index,
                      edge_attr=rel_ee_transforms,
                      y=hand_eye,
-                     y_edge=rel_ee_transforms)
+                     y_edge=rel_cam_transforms)
 
         # Return as a dictionary
         return graph
@@ -230,7 +230,7 @@ def idx_to_img_map(image_folder):
     scans = os.listdir(image_folder)
     img_list = []
     # Append a tuple of all scene and image positions
-    print("Initializing dataset indices")
+    print("Initializing dataset indices...")
     for scan_idx in tqdm(range(len(scans))):
         scan_dir = image_folder + '/' + scans[scan_idx] + '/'
         img_names = os.listdir(scan_dir)
