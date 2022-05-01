@@ -12,9 +12,9 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 class MVSDataset(Dataset):
-    def __init__(self, image_folder="Data/DTU_MVS_2014/Rectified/",
-                 json_file="Data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
-                 max_trans_offset=0.1, max_rot_offset=0, transform=None, image_size=(256, 256)):
+    def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
+                 json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
+                 max_trans_offset=0.3, max_rot_offset=0.6, transform=None, image_size=(256, 256)):
         # Storing the image folder
         self.image_folder = image_folder
 
@@ -69,7 +69,8 @@ class MVSDataset(Dataset):
         """
         ### Hand-eye transform matrix
         # Random translational offset
-        hand_trans = np.random.uniform(-self.max_trans_offset, self.max_trans_offset, 3)
+        hand_trans = np.random.uniform(0, 1, 3)
+        hand_trans = self.max_trans_offset * hand_trans/np.linalg.norm(hand_trans)
         # Random rotational angle
         hand_rpy = np.random.uniform(-self.max_rot_offset, self.max_rot_offset, 3)
         # Roll matrix
@@ -101,7 +102,8 @@ class MVSDataset(Dataset):
         hand_eye[:3] = hand_trans
         hand_eye[3] = R.from_matrix(hand_rotation).as_quat()[3]
         hand_eye[4:] = R.from_matrix(hand_rotation).as_quat()[:3]
-        
+        hand_eye[3:] *= np.sign(hand_eye[3])  # constrain to hemisphere
+
         ### Get 5 images of a randomized brightness
         image_list = []
         # Tuple of (folder idx, image idx)
@@ -143,7 +145,7 @@ class MVSDataset(Dataset):
         image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
-        relative_ee_transforms = np.zeros((self.num_nodes, self.num_nodes, 7))
+        relative_ee_transforms = np.zeros((self.edge_index.shape[1], 7))
         relative_cam_transforms = np.zeros_like(relative_ee_transforms)
         # List of end effector poses
         ee_poses = []
@@ -169,31 +171,27 @@ class MVSDataset(Dataset):
         # Loop through randomly sampled positions
         # Format is [x y z | w x y z] for [translation | rotation]
         for from_idx in range(self.num_nodes):
+            index_idx = 0
             for to_idx in range(self.num_nodes):
                 # If relative to itself
                 if from_idx == to_idx:
-                    # Set to zero transform quaternion
-                    relative_ee_transforms[from_idx, to_idx, :3] = 0
-                    relative_ee_transforms[from_idx, to_idx, 3] = 1
-                    relative_ee_transforms[from_idx, to_idx, 4:] = 0
-
-                    # Set to zero transform quaternion
-                    relative_cam_transforms[from_idx, to_idx, :3] = 0
-                    relative_cam_transforms[from_idx, to_idx, 3] = 1
-                    relative_cam_transforms[from_idx, to_idx, 4:] = 0
+                    continue
 
                 # If relative to another position
                 else:
+                    # Get rotation to put transform based on to/from indices
+                    transform_idx = index_idx + from_idx*(self.num_nodes-1)
                     # For the end effector
                     rel_rotation = ee_poses[to_idx][:3, :3] @ ee_poses[from_idx][:3, :3].T 
                     rel_translation = ee_poses[to_idx][:3, 3] - ee_poses[from_idx][:3, 3]
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
                     rel_rotation_quaternion = rotation.as_quat()
+                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
                     # Populate relative transforms matrix
-                    relative_ee_transforms[from_idx, to_idx, :3] = rel_translation
-                    relative_ee_transforms[from_idx, to_idx, 3] = rel_rotation_quaternion[3]
-                    relative_ee_transforms[from_idx, to_idx, 4:] = rel_rotation_quaternion[:3]
+                    relative_ee_transforms[transform_idx, :3] = rel_translation
+                    relative_ee_transforms[transform_idx, 3] = rel_rotation_quaternion[3]
+                    relative_ee_transforms[transform_idx, 4:] = rel_rotation_quaternion[:3]
 
                     # For the camera pose
                     rel_rotation = cam_poses[to_idx][:3, :3] @ cam_poses[from_idx][:3, :3].T 
@@ -201,17 +199,20 @@ class MVSDataset(Dataset):
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
                     rel_rotation_quaternion = rotation.as_quat()
+                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
                     # Populate relative transforms matrix
-                    relative_cam_transforms[from_idx, to_idx, :3] = rel_translation
-                    relative_cam_transforms[from_idx, to_idx, 3] = rel_rotation_quaternion[3]
-                    relative_cam_transforms[from_idx, to_idx, 4:] = rel_rotation_quaternion[:3]
+                    relative_cam_transforms[transform_idx, :3] = rel_translation
+                    relative_cam_transforms[transform_idx, 3] = rel_rotation_quaternion[3]
+                    relative_cam_transforms[transform_idx, 4:] = rel_rotation_quaternion[:3]
+
+                    # Increment index to store transformations
+                    index_idx += 1
 
 
         # Turn into a tensor
         relative_ee_transforms = torch.from_numpy(relative_ee_transforms)
+        relative_cam_transforms = torch.from_numpy(relative_cam_transforms)
         hand_eye = torch.from_numpy(hand_eye)
-
-        print(self.edge_index.shape)
 
         # Create graph to return
         graph = Data(x=image_list, edge_index=self.edge_index, edge_attr=relative_ee_transforms,

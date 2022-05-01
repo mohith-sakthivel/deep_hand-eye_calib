@@ -23,6 +23,7 @@ config.save_dir = ""
 config.model_name = ""
 config.save_model = True  # save model parameters?
 config.batch_size = 8
+config.eval_freq = 10
 
 
 def seed_everything(seed: int):
@@ -36,8 +37,6 @@ def seed_everything(seed: int):
 class Trainer(object):
 
     def __init__(self, config) -> None:
-        self.model = None
-        self.train_dataloader = None
         self.config = config
 
         self.beta_loss_coeff = 0.0  # initial relative translation loss coeff
@@ -67,9 +66,9 @@ class Trainer(object):
 
         # Define loss
         self.train_criterion_R = PoseNetCriterion(
-            sax=self.beta_loss_coeff, saq=self.gamma_loss_coeff, learn_beta=True).to(self.device)
+            beta=self.beta_loss_coeff, gamma=self.gamma_loss_coeff, learn_beta=True).to(self.device)
         self.train_criterion_he = PoseNetCriterion(
-            sax=self.beta_loss_coeff, saq=self.gamma_loss_coeff, learn_beta=True).to(self.device)
+            beta=self.beta_loss_coeff, gamma=self.gamma_loss_coeff, learn_beta=True).to(self.device)
         self.val_criterion = PoseNetCriterion().to(self.device)
 
         # Define optimizer
@@ -90,9 +89,9 @@ class Trainer(object):
                     param_group['lr'] = param_group['lr'] * self.lr_decay
                     print('LR: ', param_group['lr'])
 
-            for batch_idx, data in tqdm(enumerate(self.train_loader),
+            for batch_idx, data in tqdm(enumerate(self.train_dataloader),
                                         desc=f'[Epoch {epoch:04d}] train',
-                                        total=len(self.train_loader)):
+                                        total=len(self.train_dataloader)):
                 
                 target_R = data.y.to(self.device)
                 target_he = data.y.to(self.device)
@@ -101,82 +100,66 @@ class Trainer(object):
 
                 pred_he, pred_R, edge_index = self.model(data.to(self.device))
 
-                loss_R = self.train_criterion_R(
-                    pred_R.view(1, pred_R.size(0), pred_R.size(1)),
-                    target_R.view(1, target_R.size(0), target_R.size(1)))
+                loss_he, _, _ = self.train_criterion_he(pred_he, target_he)
+                loss_R, _, _ = self.train_criterion_R(pred_R, target_R)
 
-                loss_total = loss_R[0]
+                loss_total = loss_he + loss_R
 
                 loss_total.backward()
                 self.optimizer.step()
 
-                self.tb_writer.add_scalar("train/loss", loss_R)
+                self.tb_writer.add_scalar("train/total_loss", loss_total)
+                self.tb_writer.add_scalar("train/he_pose_loss", loss_he)
+                self.tb_writer.add_scalar("train/relative_pose_loss", loss_R)
 
-    def eval_RP(self, dataloader, epoch, num_samples=None):
+            if epoch % config.eval_freq == 10:
+                self.eval(self.train_dataloader, epoch)
+
+    def eval(self, dataloader, epoch, max_samples=None):
         self.model.eval()
-
-        pred_poses = np.zeros((L, 7))  # store all predicted poses
-        targ_poses = np.zeros((L, 7))  # store all target poses
 
         # loss functions
         t_criterion = lambda t_pred, t_gt: np.linalg.norm(t_pred - t_gt)
         q_criterion = dhe_utils.quaternion_angular_error
+        t_loss = []
+        q_loss = []
+        num_samples = 0
 
         # inference loop
         for batch_idx, data in tqdm(enumerate(dataloader), desc=f'[Epoch {epoch:04d}] eval',
                                     total=len(dataloader)):
 
-            # output : 1 x 6 or 1 x STEPS x 6
-            output_he, output_R, edge_index = self.model(data.to(self.device))
-
-            s = output.size()
-            output_R = output_R.cpu().data.numpy().reshape((-1, s[-1]))
-
-            target = data.y
-            target = target.to('cpu').numpy().reshape((-1, s[-1]))
-
-            edges = edge_index.cpu().data.numpy()
-
-            # Choose one reference absolute pose and compute the absolute poses in the subgraph
-            # using predicted relative poses
-            valid_edges = edges[1] == 0
-
-            ref_idx = np.argwhere(valid_edges)[ref_node, 0]
-            RP_estimate = output_R[ref_idx, :]
-            reference_AP = target[edges[0, ref_idx], :]
-            output = reference_AP - RP_estimate
-            output = np.expand_dims(output, axis=0)
+            num_samples += data.num_graphs
+            output_he, output_R, _ = self.model(data.to(self.device))
+            output_he = output_he.cpu().data.numpy()
+            target = data.y.to('cpu').numpy()
 
             # normalize the predicted quaternions
-            q = [qexp(p[3:]) for p in output]
-            output = np.hstack((output[:, :3], np.asarray(q)))
-            q = [qexp(p[3:]) for p in target]
+            q = [dhe_utils.qexp(p[3:]) for p in output_he]
+            output_he = np.hstack((output_he[:, :3], np.asarray(q)))
+            q = [dhe_utils.qexp(p[3:]) for p in target]
             target = np.hstack((target[:, :3], np.asarray(q)))
 
-            # take the first prediction
-            pred_poses[batch_idx, :] = output[0]
-            targ_poses[batch_idx, :] = target[0]
-
-        # calculate losses
-        t_loss = np.asarray([t_criterion(p, t)
-                             for p, t in zip(pred_poses[:, :3], targ_poses[:, :3])])
-        q_loss = np.asarray([q_criterion(p, t)
-                             for p, t in zip(pred_poses[:, 3:], targ_poses[:, 3:])])
+            # calculate losses
+            for p, t in zip(output_he):
+                t_loss.append(t_criterion(p[:3], t[:3]))
+                q_loss.append(q_criterion(p[3:], t[3:]))
 
         median_t = np.median(t_loss)
         median_q = np.median(q_loss)
         mean_t = np.mean(t_loss)
         mean_q = np.mean(q_loss)
 
-        logger.info(f'[Scene: {scene}, set: {set}, Epoch {epoch:04d}] Error in translation:'
-                    f' median {median_t:3.2f} m,'
-                    f' mean {mean_t:3.2f} m'
-                    f'\tError in rotation:'
-                    f' median {median_q:3.2f} degrees,'
-                    f' mean {mean_q:3.2f} degrees')
+        print(f'Epoch [{epoch:04d}] Error in translation:'
+              f' median {median_t:3.2f} m,'
+              f' mean {mean_t:3.2f} m'
+              f'\tError in rotation:'
+              f' median {median_q:3.2f} degrees,'
+              f' mean {mean_q:3.2f} degrees')
         return median_t, mean_t, median_q, mean_q
 
 
 def main():
     seed_everything(0)
     trainer = Trainer(config=config)
+    trainer.train()
