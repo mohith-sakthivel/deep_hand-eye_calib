@@ -93,7 +93,9 @@ class MVSDataset(Dataset):
         hand_eye_matrix[:3,:3] = hand_rotation
         hand_eye_matrix[3,3] = 1
         # Get inverse to multiply onto absolute positions
-        hand_eye_inv = np.linalg.pinv(hand_eye_matrix)
+        hand_eye_inv = hand_eye_matrix
+        hand_eye_inv[:3,3] = -hand_eye_inv[:3,3]
+        hand_eye_inv[:3,:3] = hand_rotation.T
         # Create ground truth 7-sized vector of the hand-eye calibration
         hand_eye = np.empty(7)
         hand_eye[:3] = hand_trans
@@ -161,7 +163,7 @@ class MVSDataset(Dataset):
             cam_poses.append(abs_pose)
 
             # Use inverse of hand-eye matrix to get end effector pose
-            ee_pose = abs_pose @ hand_eye_inv
+            ee_pose = hand_eye_inv @ abs_pose
             ee_poses.append(ee_pose)
 
         # Loop through randomly sampled positions
@@ -183,7 +185,7 @@ class MVSDataset(Dataset):
                 # If relative to another position
                 else:
                     # For the end effector
-                    rel_rotation = ee_poses[from_idx][:3, :3].T @ ee_poses[to_idx][:3, :3]
+                    rel_rotation = ee_poses[to_idx][:3, :3] @ ee_poses[from_idx][:3, :3].T 
                     rel_translation = ee_poses[to_idx][:3, 3] - ee_poses[from_idx][:3, 3]
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
@@ -194,7 +196,7 @@ class MVSDataset(Dataset):
                     relative_ee_transforms[from_idx, to_idx, 4:] = rel_rotation_quaternion[:3]
 
                     # For the camera pose
-                    rel_rotation = cam_poses[from_idx][:3, :3].T @ cam_poses[to_idx][:3, :3]
+                    rel_rotation = cam_poses[to_idx][:3, :3] @ cam_poses[from_idx][:3, :3].T 
                     rel_translation = cam_poses[to_idx][:3, 3] - cam_poses[from_idx][:3, 3]
                     # Obtain quaternion from relative rotation
                     rotation = R.from_matrix(rel_rotation)
