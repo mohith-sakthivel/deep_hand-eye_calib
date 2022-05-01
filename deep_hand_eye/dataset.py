@@ -11,6 +11,9 @@ from scipy.spatial.transform import Rotation as R
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+import deep_hand_eye.pose_utils as p_utils
+
+
 class MVSDataset(Dataset):
     def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
                  json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
@@ -39,22 +42,22 @@ class MVSDataset(Dataset):
                 transforms.Resize(image_size),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
+                                     std=[0.229, 0.224, 0.225])
             ])
         else:
             self.transform = transform
 
         # Image formats for the different brightnesses
         self.image_format = ['rect_{}_0_r5000.png', 'rect_{}_1_r5000.png', 'rect_{}_2_r5000.png',
-                            'rect_{}_3_r5000.png', 'rect_{}_4_r5000.png', 'rect_{}_5_r5000.png',
-                            'rect_{}_6_r5000.png', 'rect_{}_max.png']
+                             'rect_{}_3_r5000.png', 'rect_{}_4_r5000.png', 'rect_{}_5_r5000.png',
+                             'rect_{}_6_r5000.png', 'rect_{}_max.png']
 
         # Create edge index tensor
         self.edge_index = edge_idx_gen(self.num_nodes)
 
         # Mapping between idx and unique images
         self.idx_to_img_mapping = idx_to_img_map(image_folder)
-        
+
     def __len__(self):
         return len(self.idx_to_img_mapping)
 
@@ -67,20 +70,21 @@ class MVSDataset(Dataset):
                          [x y z | w x y z]
             hand_eye : hand eye translation vector used to generate data
         """
-        ### Hand-eye transform matrix
-        # Random translational offset
-        hand_trans = np.random.uniform(0, 1, 3)
-        hand_trans = self.max_trans_offset * hand_trans/np.linalg.norm(hand_trans)
+        # Random hand-eye transform matrix
+        trans_vec = np.random.uniform(-1, 1, 3)
+        trans_vec = trans_vec / np.linalg.norm(trans_vec)
+        hand_trans = np.random.uniform(0, self.max_trans_offset) * trans_vec
         # Random rotational angle
-        hand_rpy = np.random.uniform(-self.max_rot_offset, self.max_rot_offset, 3)
+        hand_rpy = np.random.uniform(-self.max_rot_offset,
+                                     self.max_rot_offset, 3)
         # Roll matrix
         hand_roll = np.array([[1, 0, 0],
-                            [0, np.cos(hand_rpy[0]), -np.sin(hand_rpy[0])],
-                            [0, np.sin(hand_rpy[0]), np.cos(hand_rpy[0])]])
+                              [0, np.cos(hand_rpy[0]), -np.sin(hand_rpy[0])],
+                              [0, np.sin(hand_rpy[0]), np.cos(hand_rpy[0])]])
         # Pitch matrix
         hand_pitch = np.array([[np.cos(hand_rpy[1]), 0, np.sin(hand_rpy[1])],
-                            [0, 1, 0],
-                            [-np.sin(hand_rpy[1]), 0, np.cos(hand_rpy[1])]])
+                               [0, 1, 0],
+                               [-np.sin(hand_rpy[1]), 0, np.cos(hand_rpy[1])]])
         # Yaw matrix
         hand_yaw = np.array([[np.cos(hand_rpy[2]), -np.sin(hand_rpy[2]), 0],
                             [np.sin(hand_rpy[2]), np.cos(hand_rpy[2]), 0],
@@ -89,29 +93,22 @@ class MVSDataset(Dataset):
         hand_rotation = hand_yaw @ hand_pitch @ hand_roll
 
         # Hand-eye transformation matrix
-        hand_eye_matrix = np.zeros((4,4))
-        hand_eye_matrix[:3,3] = hand_trans
-        hand_eye_matrix[:3,:3] = hand_rotation
-        hand_eye_matrix[3,3] = 1
+        hand_eye_matrix = np.zeros((4, 4))
+        hand_eye_matrix[:3, 3] = hand_trans
+        hand_eye_matrix[:3, :3] = hand_rotation
+        hand_eye_matrix[3, 3] = 1
         # Get inverse to multiply onto absolute positions
-        hand_eye_inv = hand_eye_matrix
-        hand_eye_inv[:3,3] = -hand_eye_inv[:3,3]
-        hand_eye_inv[:3,:3] = hand_rotation.T
+        hand_eye_inv = p_utils.invert_homo(hand_eye_matrix)
         # Create ground truth 7-sized vector of the hand-eye calibration
-        hand_eye = np.empty(7)
-        hand_eye[:3] = hand_trans
-        hand_eye[3] = R.from_matrix(hand_rotation).as_quat()[3]
-        hand_eye[4:] = R.from_matrix(hand_rotation).as_quat()[:3]
-        hand_eye[3:] *= np.sign(hand_eye[3])  # constrain to hemisphere
+        hand_eye = p_utils.homo_to_quat(hand_eye_matrix)
 
-        ### Get 5 images of a randomized brightness
+        # Get 5 images of a randomized brightness
         image_list = []
-        # Tuple of (folder idx, image idx)
-        folder_img = self.idx_to_img_mapping[idx]
+        folder_idx, img_idx = self.idx_to_img_mapping[idx]
         # Set folder directory - derived from idx
-        folder = self.image_folder + self.scans[folder_img[0]] + '/'
+        folder = self.image_folder + self.scans[folder_idx] + '/'
         # Get initial image based on image number derived from idx
-        img_name = os.listdir(folder)[folder_img[1]]
+        img_name = os.listdir(folder)[img_idx]
         # If brightness is within the indices of 0 to 7
         if len(img_name) == 20:
             brightness = int(img_name[9])
@@ -145,27 +142,29 @@ class MVSDataset(Dataset):
         image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
-        relative_ee_transforms = np.zeros((self.edge_index.shape[1], 7))
-        relative_cam_transforms = np.zeros_like(relative_ee_transforms)
+        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 7))
+        rel_cam_transforms = np.zeros_like(rel_ee_transforms)
         # List of end effector poses
         ee_poses = []
         cam_poses = []
         # Obtain absolute end effector pose from the JSON file
         for index_idx in index_list:
             # Camera pose components from JSON
-            abs_translation = np.array(self.camera_positions['pose']['trans'][index_idx])
-            abs_rotation = np.array(self.camera_positions['pose']['rot'][index_idx])
+            abs_translation = np.array(
+                self.camera_positions['pose']['trans'][index_idx])
+            abs_rotation = np.array(
+                self.camera_positions['pose']['rot'][index_idx])
             # Camera pose matrix
-            abs_pose = np.zeros((4,4))
-            abs_pose[:3,:3] = abs_rotation
-            abs_pose[:3,3] = abs_translation.T
-            abs_pose[3,3] = 1
+            abs_pose = np.zeros((4, 4))
+            abs_pose[:3, :3] = abs_rotation
+            abs_pose[:3, 3] = abs_translation
+            abs_pose[3, 3] = 1
 
             # Append camera pose
             cam_poses.append(abs_pose)
 
             # Use inverse of hand-eye matrix to get end effector pose
-            ee_pose = hand_eye_inv @ abs_pose
+            ee_pose = abs_pose @ hand_eye_inv
             ee_poses.append(ee_pose)
 
         # Loop through randomly sampled positions
@@ -176,47 +175,30 @@ class MVSDataset(Dataset):
                 # If relative to itself
                 if from_idx == to_idx:
                     continue
+                # Get rotation to put transform based on to/from indices
+                edge_idx = index_idx + from_idx*(self.num_nodes-1)
+                # For the end effector
+                rel_ee = p_utils.invert_homo(ee_poses[from_idx]) @ ee_poses[to_idx]
+                rel_ee_transforms[edge_idx] = p_utils.homo_to_quat(rel_ee)
 
-                # If relative to another position
-                else:
-                    # Get rotation to put transform based on to/from indices
-                    transform_idx = index_idx + from_idx*(self.num_nodes-1)
-                    # For the end effector
-                    rel_rotation = ee_poses[to_idx][:3, :3] @ ee_poses[from_idx][:3, :3].T 
-                    rel_translation = ee_poses[to_idx][:3, 3] - ee_poses[from_idx][:3, 3]
-                    # Obtain quaternion from relative rotation
-                    rotation = R.from_matrix(rel_rotation)
-                    rel_rotation_quaternion = rotation.as_quat()
-                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
-                    # Populate relative transforms matrix
-                    relative_ee_transforms[transform_idx, :3] = rel_translation
-                    relative_ee_transforms[transform_idx, 3] = rel_rotation_quaternion[3]
-                    relative_ee_transforms[transform_idx, 4:] = rel_rotation_quaternion[:3]
+                # For the camera pose
+                rel_cam = p_utils.invert_homo(cam_poses[from_idx]) @ cam_poses[to_idx]
+                rel_cam_transforms[edge_idx] = p_utils.homo_to_quat(rel_cam)
 
-                    # For the camera pose
-                    rel_rotation = cam_poses[to_idx][:3, :3] @ cam_poses[from_idx][:3, :3].T 
-                    rel_translation = cam_poses[to_idx][:3, 3] - cam_poses[from_idx][:3, 3]
-                    # Obtain quaternion from relative rotation
-                    rotation = R.from_matrix(rel_rotation)
-                    rel_rotation_quaternion = rotation.as_quat()
-                    rel_rotation_quaternion[3:] *= np.sign(rel_rotation_quaternion[3])  # constrain to hemisphere
-                    # Populate relative transforms matrix
-                    relative_cam_transforms[transform_idx, :3] = rel_translation
-                    relative_cam_transforms[transform_idx, 3] = rel_rotation_quaternion[3]
-                    relative_cam_transforms[transform_idx, 4:] = rel_rotation_quaternion[:3]
-
-                    # Increment index to store transformations
-                    index_idx += 1
-
+                # Increment index to store transformations
+                index_idx += 1
 
         # Turn into a tensor
-        relative_ee_transforms = torch.from_numpy(relative_ee_transforms)
-        relative_cam_transforms = torch.from_numpy(relative_cam_transforms)
-        hand_eye = torch.from_numpy(hand_eye)
+        rel_ee_transforms = torch.from_numpy(rel_ee_transforms)
+        rel_cam_transforms = torch.from_numpy(rel_cam_transforms)
+        hand_eye = torch.from_numpy(hand_eye).unsqueeze(dim=0)
 
         # Create graph to return
-        graph = Data(x=image_list, edge_index=self.edge_index, edge_attr=relative_ee_transforms,
-                    y=hand_eye, y_edge=relative_cam_transforms)
+        graph = Data(x=image_list,
+                     edge_index=self.edge_index,
+                     edge_attr=rel_ee_transforms,
+                     y=hand_eye,
+                     y_edge=rel_cam_transforms)
 
         # Return as a dictionary
         return graph
@@ -248,7 +230,7 @@ def idx_to_img_map(image_folder):
     scans = os.listdir(image_folder)
     img_list = []
     # Append a tuple of all scene and image positions
-    print("Initializing dataset indices")
+    print("Initializing dataset indices...")
     for scan_idx in tqdm(range(len(scans))):
         scan_dir = image_folder + '/' + scans[scan_idx] + '/'
         img_names = os.listdir(scan_dir)

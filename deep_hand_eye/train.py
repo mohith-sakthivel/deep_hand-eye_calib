@@ -9,12 +9,13 @@ import torch
 import torch.utils.tensorboard as tb
 from torch_geometric.loader import DataLoader
 
-import deep_hand_eye.utils as dhe_utils
+import deep_hand_eye.utils as utils
+import deep_hand_eye.pose_utils as p_utils
 from deep_hand_eye.model import GCNet
 from deep_hand_eye.losses import PoseNetCriterion
 
 
-config = dhe_utils.AttrDict()
+config = utils.AttrDict()
 config.seed = 0
 config.device = "cuda"
 config.num_workers = 8
@@ -120,7 +121,7 @@ class Trainer(object):
 
         # loss functions
         t_criterion = lambda t_pred, t_gt: np.linalg.norm(t_pred - t_gt)
-        q_criterion = dhe_utils.quaternion_angular_error
+        q_criterion = p_utils.quaternion_angular_error
         t_loss = []
         q_loss = []
         num_samples = 0
@@ -135,9 +136,9 @@ class Trainer(object):
             target = data.y.to('cpu').numpy()
 
             # normalize the predicted quaternions
-            q = [dhe_utils.qexp(p[3:]) for p in output_he]
+            q = [p_utils.qexp(p[3:]) for p in output_he]
             output_he = np.hstack((output_he[:, :3], np.asarray(q)))
-            q = [dhe_utils.qexp(p[3:]) for p in target]
+            q = [p_utils.qexp(p[3:]) for p in target]
             target = np.hstack((target[:, :3], np.asarray(q)))
 
             # calculate losses
