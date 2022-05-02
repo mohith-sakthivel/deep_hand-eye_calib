@@ -144,24 +144,21 @@ class GCNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0)
 
-    def join_node_features(self, x, edge_index):
+    def join_node_features(self, x, edge_index, edge_attr):
         # join node features of a corresponding edge
         # introduce invariance to edge direction (?)
         edge_feat = torch.cat(
-            (x[torch.min(edge_index, 0)[0], ...],
-             x[torch.max(edge_index, 0)[0], ...]),
-            dim=1)
-        # torch.testing.assert_allclose(edge_feat, edge_feat2)
+            (x[edge_index[0], ...],
+             x[edge_index[1], ...],
+             edge_attr), dim=1)
         return edge_feat
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        x = x.view(x.size(0), 3, self.input_img_height, -1).contiguous()
-
         x = self.feature_extractor(x)
 
         # Compute edge features
-        edge_node_feat = self.join_node_features(x, edge_index)
+        edge_node_feat = self.join_node_features(x, edge_index, edge_attr)
         edge_feat = self.proj_init_edge(edge_node_feat)
         edge_feat = F.relu(edge_feat)
 
@@ -181,9 +178,12 @@ class GCNet(nn.Module):
         wpqr_R = self.fc_wpqr_R(edge_feat)
 
         # Predict the hand-eye parameters
-        edge_graph_ids = torch.arange(0, data.num_graphs).view(-1, 1) == data.batch
-        edge_he_attn_logits = self.edge_attn_he(edge_feat)
-        edge_he_attn = F.softmax(edge_graph_ids * edge_he_attn_logits.squeeze(), dim=-1)
+        edge_he_logits = self.edge_attn_he(edge_feat).squeeze().repeat(data.num_graphs, 1)
+        edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
+        num_graphs = torch.arange(0, data.num_graphs).view(-1, 1)
+        edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
+        
+        edge_he_attn = F.softmax(edge_he_logits, dim=-1)
         edge_he_aggr = torch.matmul(edge_he_attn, edge_feat)
 
         xyz_he = self.fc_xyz_he(edge_he_aggr)

@@ -68,3 +68,11 @@ def homo_to_quat(T):
     quat_pose[3:] = R.from_matrix(T[:3, :3]).as_quat()[[3, 0, 1, 2]]
     quat_pose[3:] *= np.sign(quat_pose[3])  # constrain to hemisphere
     return quat_pose
+
+def homo_to_log_quat(T):
+    quat_pose = np.empty(6)
+    quat_pose[:3] = T[:3, 3]
+    quat = R.from_matrix(T[:3, :3]).as_quat()[[3, 0, 1, 2]]
+    quat *= np.sign(quat[0])  # constrain to hemisphere
+    quat_pose[3:] = qlog(quat)
+    return quat_pose

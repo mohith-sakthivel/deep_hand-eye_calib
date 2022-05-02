@@ -18,7 +18,7 @@ def test_dataset(test_size=64):
     for n in tqdm(range(data.num_graphs)):
 
         hand_eye = data[n].y.squeeze()
-        hand_eye_quat = hand_eye[3:][[1, 2, 3, 0]]
+        hand_eye_quat = p_utils.qexp(hand_eye[3:])[[1, 2, 3, 0]]
         hand_eye_homogenous = R.from_quat(hand_eye_quat).as_matrix()
         hand_eye_translate = np.array(hand_eye[:3]).reshape(-1, 1)
         hand_eye_homogenous = np.hstack([hand_eye_homogenous, hand_eye_translate])
@@ -29,13 +29,13 @@ def test_dataset(test_size=64):
             rel_ee_transform = data[n].edge_attr[i]
             rel_cam_transform = data[n].y_edge[i]
 
-            ee_quat = rel_ee_transform[3:][[1, 2, 3, 0]]
+            ee_quat = p_utils.qexp(rel_ee_transform[3:])[[1, 2, 3, 0]]
             ee_homogenous = R.from_quat(ee_quat).as_matrix()
             ee_translate = np.array(rel_ee_transform[:3]).reshape(-1, 1)
             ee_homogenous = np.hstack([ee_homogenous, ee_translate])
             ee_homogenous = np.vstack([ee_homogenous, [0, 0, 0, 1]])
 
-            cam_quat = rel_cam_transform[3:][[1, 2, 3, 0]]
+            cam_quat = p_utils.qexp(rel_cam_transform[3:])[[1, 2, 3, 0]]
             cam_homogenous = R.from_quat(cam_quat).as_matrix()
             cam_translate = np.array(rel_cam_transform[:3]).reshape(-1, 1)
             cam_homogenous = np.hstack([cam_homogenous, cam_translate])

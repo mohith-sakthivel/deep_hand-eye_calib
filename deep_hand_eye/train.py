@@ -25,6 +25,9 @@ config.model_name = ""
 config.save_model = True  # save model parameters?
 config.batch_size = 8
 config.eval_freq = 10
+config.aux_coeffs = {
+    "rel_cam_pose": 1
+}
 
 
 def seed_everything(seed: int):
@@ -93,18 +96,18 @@ class Trainer(object):
             for batch_idx, data in tqdm(enumerate(self.train_dataloader),
                                         desc=f'[Epoch {epoch:04d}] train',
                                         total=len(self.train_dataloader)):
-                
-                target_R = data.y.to(self.device)
-                target_he = data.y.to(self.device)
 
                 self.optimizer.zero_grad()
 
-                pred_he, pred_R, edge_index = self.model(data.to(self.device))
+                data = data.to(self.device)
+                target_he, target_R = data.y, data.y_edge
+                pred_he, pred_R, _ = self.model(data.to(self.device))
 
                 loss_he, _, _ = self.train_criterion_he(pred_he, target_he)
                 loss_R, _, _ = self.train_criterion_R(pred_R, target_R)
 
-                loss_total = loss_he + loss_R
+                loss_total = (loss_he +
+                              self.config.aux_coeff["rel_cam_pose"] * loss_R)
 
                 loss_total.backward()
                 self.optimizer.step()
@@ -113,7 +116,7 @@ class Trainer(object):
                 self.tb_writer.add_scalar("train/he_pose_loss", loss_he)
                 self.tb_writer.add_scalar("train/relative_pose_loss", loss_R)
 
-            if epoch % config.eval_freq == 10:
+            if epoch % config.eval_freq == 0:
                 self.eval(self.train_dataloader, epoch)
 
     def eval(self, dataloader, epoch, max_samples=None):
@@ -131,7 +134,8 @@ class Trainer(object):
                                     total=len(dataloader)):
 
             num_samples += data.num_graphs
-            output_he, output_R, _ = self.model(data.to(self.device))
+            data = data.to(self.device)
+            output_he, _, _ = self.model(data)
             output_he = output_he.cpu().data.numpy()
             target = data.y.to('cpu').numpy()
 
@@ -145,6 +149,9 @@ class Trainer(object):
             for p, t in zip(output_he):
                 t_loss.append(t_criterion(p[:3], t[:3]))
                 q_loss.append(q_criterion(p[3:], t[3:]))
+
+            if num_samples > max_samples:
+                break
 
         median_t = np.median(t_loss)
         median_q = np.median(q_loss)

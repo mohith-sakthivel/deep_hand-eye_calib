@@ -100,7 +100,7 @@ class MVSDataset(Dataset):
         # Get inverse to multiply onto absolute positions
         hand_eye_inv = p_utils.invert_homo(hand_eye_matrix)
         # Create ground truth 7-sized vector of the hand-eye calibration
-        hand_eye = p_utils.homo_to_quat(hand_eye_matrix)
+        hand_eye = p_utils.homo_to_log_quat(hand_eye_matrix)
 
         # Get 5 images of a randomized brightness
         image_list = []
@@ -142,7 +142,7 @@ class MVSDataset(Dataset):
         image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
-        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 7))
+        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 6))
         rel_cam_transforms = np.zeros_like(rel_ee_transforms)
         # List of end effector poses
         ee_poses = []
@@ -179,11 +179,11 @@ class MVSDataset(Dataset):
                 edge_idx = index_idx + from_idx*(self.num_nodes-1)
                 # For the end effector
                 rel_ee = p_utils.invert_homo(ee_poses[from_idx]) @ ee_poses[to_idx]
-                rel_ee_transforms[edge_idx] = p_utils.homo_to_quat(rel_ee)
+                rel_ee_transforms[edge_idx] = p_utils.homo_to_log_quat(rel_ee)
 
                 # For the camera pose
                 rel_cam = p_utils.invert_homo(cam_poses[from_idx]) @ cam_poses[to_idx]
-                rel_cam_transforms[edge_idx] = p_utils.homo_to_quat(rel_cam)
+                rel_cam_transforms[edge_idx] = p_utils.homo_to_log_quat(rel_cam)
 
                 # Increment index to store transformations
                 index_idx += 1
@@ -205,7 +205,7 @@ class MVSDataset(Dataset):
 
 
 def edge_idx_gen(num_nodes):
-    edge_index_top = np.zeros(num_nodes*(num_nodes-1))
+    edge_index_top = np.zeros(num_nodes*(num_nodes-1), dtype=np.int64)
     """
     Generates the top and bottom array of edge indices separately and stacks them
     """
