@@ -26,7 +26,7 @@ config.save_dir = ""
 config.model_name = ""
 config.save_model = True  # save model parameters?
 config.batch_size = 8
-config.eval_freq = 10
+config.eval_freq = 1000
 config.log_freq = 20
 config.aux_coeffs = {
     "rel_cam_pose": 1
@@ -111,8 +111,10 @@ class Trainer(object):
                 target_he, target_R = data.y, data.y_edge
                 pred_he, pred_R, _ = self.model(data)
 
-                loss_he, _, _ = self.train_criterion_he(pred_he, target_he)
-                loss_R, _, _ = self.train_criterion_R(pred_R, target_R)
+                loss_he, loss_he_t, loss_he_q = self.train_criterion_he(
+                    pred_he, target_he)
+                loss_R, loss_R_t, loss_R_q = self.train_criterion_R(
+                    pred_R, target_R)
 
                 loss_total = (loss_he +
                               self.config.aux_coeffs["rel_cam_pose"] * loss_R)
@@ -121,19 +123,20 @@ class Trainer(object):
                 self.optimizer.step()
 
                 if iter_no % config.log_freq == 0:
-                    self.tb_writer.add_scalar(
-                        "train/total_loss", loss_total, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/he_pose_loss", loss_he, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/relative_pose_loss", loss_R, iter_no)
+                    log_data = {"epoch": epoch, "total_loss": loss_total,
+                                "he_pose_loss": loss_he, "he_trans_loss": loss_he_t,
+                                "he_rot_loss": loss_he_q, "he_beta": self.train_criterion_he.beta,
+                                "he_gamma": self.train_criterion_he.gamma, "rel_pose_loss": loss_R,
+                                "rel_trans_loss": loss_R_t, "rel_rot_loss": loss_R_q,
+                                "rel_beta": self.train_criterion_R.beta, "rel_gamma": self.train_criterion_R.gamma}
+                    self.tb_writer.add_scalars("train", log_data, iter_no)
 
                 iter_no += 1
 
-            if epoch % config.eval_freq == 0:
-                self.eval(self.train_dataloader, epoch)
+            if iter_no % config.eval_freq == 0:
+                self.eval(self.train_dataloader, iter_no)
 
-    def eval(self, dataloader, epoch, max_samples=None):
+    def eval(self, dataloader, iter_no, max_samples=5000):
         self.model.eval()
 
         # loss functions
@@ -144,7 +147,7 @@ class Trainer(object):
         num_samples = 0
 
         # inference loop
-        for batch_idx, data in tqdm(enumerate(dataloader), desc=f'[Epoch {epoch:04d}] eval',
+        for batch_idx, data in tqdm(enumerate(dataloader), desc=f'[Iter {iter_no:04d}] eval',
                                     total=len(dataloader)):
 
             num_samples += data.num_graphs
@@ -160,7 +163,7 @@ class Trainer(object):
             target = np.hstack((target[:, :3], np.asarray(q)))
 
             # calculate losses
-            for p, t in zip(output_he):
+            for p, t in zip(output_he, target):
                 t_loss.append(t_criterion(p[:3], t[:3]))
                 q_loss.append(q_criterion(p[3:], t[3:]))
 
@@ -172,12 +175,17 @@ class Trainer(object):
         mean_t = np.mean(t_loss)
         mean_q = np.mean(q_loss)
 
-        print(f'Epoch [{epoch:04d}] Error in translation:'
+        print(f'Iter No [{iter_no:04d}] Error in translation:'
               f' median {median_t:3.2f} m,'
               f' mean {mean_t:3.2f} m'
               f'\tError in rotation:'
               f' median {median_q:3.2f} degrees,'
               f' mean {mean_q:3.2f} degrees')
+
+        log_data = {"trans_median": median_t, "trans_mean": mean_t,
+                    "rot_median": median_q, "rot_mean": mean_q}
+        self.tb_writer.add_scalars("test", log_data, iter_no)
+
         return median_t, mean_t, median_q, mean_q
 
     def save_model(self):
@@ -190,7 +198,7 @@ class Trainer(object):
 def main():
     seed_everything(0)
     trainer = Trainer(config=config)
-    # trainer.train()
+    trainer.train()
     trainer.save_model()
 
 
