@@ -123,13 +123,29 @@ class Trainer(object):
                 self.optimizer.step()
 
                 if iter_no % config.log_freq == 0:
-                    log_data = {"epoch": epoch, "total_loss": loss_total,
-                                "he_pose_loss": loss_he, "he_trans_loss": loss_he_t,
-                                "he_rot_loss": loss_he_q, "he_beta": self.train_criterion_he.beta,
-                                "he_gamma": self.train_criterion_he.gamma, "rel_pose_loss": loss_R,
-                                "rel_trans_loss": loss_R_t, "rel_rot_loss": loss_R_q,
-                                "rel_beta": self.train_criterion_R.beta, "rel_gamma": self.train_criterion_R.gamma}
-                    self.tb_writer.add_scalars("train", log_data, iter_no)
+                    self.tb_writer.add_scalar("train/epoch", epoch, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/total_loss", loss_total, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/he_pose_loss", loss_he, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/he_trans_loss", loss_he_t, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/he_rot_loss", loss_he_q, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/he_beta", self.train_criterion_he.beta)
+                    self.tb_writer.add_scalar(
+                        "train/he_gamma", self.train_criterion_he.gamma)
+                    self.tb_writer.add_scalar(
+                        "train/rel_pose_loss", loss_R, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/rel_trans_loss", loss_R_t, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/rel_rot_loss", loss_R_q, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/rel_beta", self.train_criterion_R.beta)
+                    self.tb_writer.add_scalar(
+                        "train/rel_gamma", self.train_criterion_R.gamma)
 
                 iter_no += 1
 
@@ -182,9 +198,10 @@ class Trainer(object):
               f' median {median_q:3.2f} degrees,'
               f' mean {mean_q:3.2f} degrees')
 
-        log_data = {"trans_median": median_t, "trans_mean": mean_t,
-                    "rot_median": median_q, "rot_mean": mean_q}
-        self.tb_writer.add_scalars("test", log_data, iter_no)
+        self.tb_writer.add_scalar("test/trans_medain", median_t, iter_no)
+        self.tb_writer.add_scalar("test/trans_mean", mean_t, iter_no)
+        self.tb_writer.add_scalar("test/rot_median", median_q, iter_no)
+        self.tb_writer.add_scalar("test/rot_mean", mean_q, iter_no)
 
         return median_t, mean_t, median_q, mean_q
 
