@@ -1,8 +1,9 @@
 import os
+import datetime
 import argparse
-
-import numpy as np
 import random
+import numpy as np
+from pathlib import Path
 from tqdm import tqdm
 
 import torch
@@ -12,6 +13,7 @@ from torch_geometric.loader import DataLoader
 import deep_hand_eye.utils as utils
 import deep_hand_eye.pose_utils as p_utils
 from deep_hand_eye.model import GCNet
+from deep_hand_eye.dataset import MVSDataset
 from deep_hand_eye.losses import PoseNetCriterion
 
 
@@ -19,15 +21,19 @@ config = utils.AttrDict()
 config.seed = 0
 config.device = "cuda"
 config.num_workers = 8
-config.epochs = 100
+config.epochs = 25
 config.save_dir = ""
 config.model_name = ""
 config.save_model = True  # save model parameters?
 config.batch_size = 8
 config.eval_freq = 10
+config.log_freq = 20
 config.aux_coeffs = {
     "rel_cam_pose": 1
 }
+config.model_name = ""
+config.log_dir = Path("runs")
+config.model_save_dir = Path("models")
 
 
 def seed_everything(seed: int):
@@ -50,15 +56,17 @@ class Trainer(object):
         self.lr_decay = 0.1  # learning rate decay factor
         self.lr_decay_step = 20
         self.learn_loss_coeffs = True
+        self.run_id = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
 
         if config.device == "cpu" or not torch.cuda.is_available():
             self.device = "cpu"
         else:
             self.device = "cuda"
-        self.tb_writer = tb.writer.SummaryWriter()
+        self.tb_writer = tb.writer.SummaryWriter(
+            log_dir=self.config.log_dir / self.config.model_name / self.run_id)
 
         # Setup Dataset
-        self.train_dataset = None
+        self.train_dataset = MVSDataset()
         self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.config.batch_size,
                                            shuffle=True, num_workers=self.config.num_workers)
 
@@ -86,6 +94,7 @@ class Trainer(object):
             param_list, lr=self.lr, weight_decay=self.weight_decay)
 
     def train(self):
+        iter_no = 0
         for epoch in tqdm(range(self.config.epochs), desc='epoch', total=self.config.epochs):
             self.model.train()
             if epoch > 1 and epoch % self.lr_decay_step == 0:
@@ -96,25 +105,30 @@ class Trainer(object):
             for batch_idx, data in tqdm(enumerate(self.train_dataloader),
                                         desc=f'[Epoch {epoch:04d}] train',
                                         total=len(self.train_dataloader)):
-
                 self.optimizer.zero_grad()
 
                 data = data.to(self.device)
                 target_he, target_R = data.y, data.y_edge
-                pred_he, pred_R, _ = self.model(data.to(self.device))
+                pred_he, pred_R, _ = self.model(data)
 
                 loss_he, _, _ = self.train_criterion_he(pred_he, target_he)
                 loss_R, _, _ = self.train_criterion_R(pred_R, target_R)
 
                 loss_total = (loss_he +
-                              self.config.aux_coeff["rel_cam_pose"] * loss_R)
+                              self.config.aux_coeffs["rel_cam_pose"] * loss_R)
 
                 loss_total.backward()
                 self.optimizer.step()
 
-                self.tb_writer.add_scalar("train/total_loss", loss_total)
-                self.tb_writer.add_scalar("train/he_pose_loss", loss_he)
-                self.tb_writer.add_scalar("train/relative_pose_loss", loss_R)
+                if iter_no % config.log_freq == 0:
+                    self.tb_writer.add_scalar(
+                        "train/total_loss", loss_total, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/he_pose_loss", loss_he, iter_no)
+                    self.tb_writer.add_scalar(
+                        "train/relative_pose_loss", loss_R, iter_no)
+
+                iter_no += 1
 
             if epoch % config.eval_freq == 0:
                 self.eval(self.train_dataloader, epoch)
@@ -123,7 +137,7 @@ class Trainer(object):
         self.model.eval()
 
         # loss functions
-        t_criterion = lambda t_pred, t_gt: np.linalg.norm(t_pred - t_gt)
+        def t_criterion(t_pred, t_gt): return np.linalg.norm(t_pred - t_gt)
         q_criterion = p_utils.quaternion_angular_error
         t_loss = []
         q_loss = []
@@ -166,8 +180,19 @@ class Trainer(object):
               f' mean {mean_q:3.2f} degrees')
         return median_t, mean_t, median_q, mean_q
 
+    def save_model(self):
+        save_dir = self.config.model_save_dir / self.config.model_name / self.run_id
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        torch.save(self.model, save_dir / "model.pt")
+
 
 def main():
     seed_everything(0)
     trainer = Trainer(config=config)
-    trainer.train()
+    # trainer.train()
+    trainer.save_model()
+
+
+if __name__ == "__main__":
+    main()

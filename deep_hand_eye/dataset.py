@@ -17,7 +17,7 @@ import deep_hand_eye.pose_utils as p_utils
 class MVSDataset(Dataset):
     def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
                  json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
-                 max_trans_offset=0.3, max_rot_offset=0.6, transform=None, image_size=(256, 256)):
+                 max_trans_offset=0.3, max_rot_offset=0.0, transform=None, image_size=(256, 256)):
         # Storing the image folder
         self.image_folder = image_folder
 
@@ -142,7 +142,7 @@ class MVSDataset(Dataset):
         image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
-        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 6))
+        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 6), dtype=np.float32)
         rel_cam_transforms = np.zeros_like(rel_ee_transforms)
         # List of end effector poses
         ee_poses = []

@@ -119,7 +119,7 @@ class GCNet(nn.Module):
                                               node_feat_dim)
 
         # intial edge project layer
-        self.proj_init_edge = nn.Linear(2 * node_feat_dim, edge_feat_dim)
+        self.proj_init_edge = nn.Linear(2 * node_feat_dim + 6, edge_feat_dim)
 
         # setup the message passing network
         self.gnn_layer = SimpleConvEdgeUpdate(
@@ -170,8 +170,8 @@ class GCNet(nn.Module):
 
         # Drop node and edge features if necessary
         if self.droprate > 0:
-            x = F.dropout(x, p=self.droprate)
-            edge_feat = F.dropout(edge_feat, p=self.droprate)
+            x = F.dropout(x, p=self.droprate, training=self.training)
+            edge_feat = F.dropout(edge_feat, p=self.droprate, training=self.training)
 
         # Predict the relative pose between images
         xyz_R = self.fc_xyz_R(edge_feat)
@@ -180,7 +180,7 @@ class GCNet(nn.Module):
         # Predict the hand-eye parameters
         edge_he_logits = self.edge_attn_he(edge_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
-        num_graphs = torch.arange(0, data.num_graphs).view(-1, 1)
+        num_graphs = torch.arange(0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
         
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
