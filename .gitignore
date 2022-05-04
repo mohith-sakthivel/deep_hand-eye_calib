@@ -1,5 +1,6 @@
 data/
 docs/
 runs/
+models/
 
 __pycache__

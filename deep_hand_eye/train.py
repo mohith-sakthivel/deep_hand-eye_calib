@@ -26,7 +26,7 @@ config.save_dir = ""
 config.model_name = ""
 config.save_model = True  # save model parameters?
 config.batch_size = 8
-config.eval_freq = 1000
+config.eval_freq = 2000
 config.log_freq = 20
 config.aux_coeffs = {
     "rel_cam_pose": 1
@@ -147,12 +147,12 @@ class Trainer(object):
                     self.tb_writer.add_scalar(
                         "train/rel_gamma", self.train_criterion_R.gamma)
 
+                if iter_no % config.eval_freq == 0:
+                    self.eval(self.train_dataloader, iter_no)
                 iter_no += 1
 
-            if iter_no % config.eval_freq == 0:
-                self.eval(self.train_dataloader, iter_no)
-
-    def eval(self, dataloader, iter_no, max_samples=5000):
+    @torch.no_grad()
+    def eval(self, dataloader, iter_no, max_samples=2000):
         self.model.eval()
 
         # loss functions
@@ -164,7 +164,7 @@ class Trainer(object):
 
         # inference loop
         for batch_idx, data in tqdm(enumerate(dataloader), desc=f'[Iter {iter_no:04d}] eval',
-                                    total=len(dataloader)):
+                                    total=max_samples/self.config.batch_size):
 
             num_samples += data.num_graphs
             data = data.to(self.device)
