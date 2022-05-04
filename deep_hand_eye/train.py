@@ -95,7 +95,7 @@ class Trainer(object):
 
     def train(self):
         iter_no = 0
-        for epoch in tqdm(range(self.config.epochs), desc='epoch', total=self.config.epochs):
+        for epoch in range(self.config.epochs):
             self.model.train()
             if epoch > 1 and epoch % self.lr_decay_step == 0:
                 for param_group in self.optimizer.param_groups:
@@ -103,7 +103,7 @@ class Trainer(object):
                     print('LR: ', param_group['lr'])
 
             for batch_idx, data in tqdm(enumerate(self.train_dataloader),
-                                        desc=f'[Epoch {epoch:04d}] train',
+                                        desc=f'[Epoch {epoch:04d}/{self.config.epochs}] train',
                                         total=len(self.train_dataloader)):
                 self.optimizer.zero_grad()
 
