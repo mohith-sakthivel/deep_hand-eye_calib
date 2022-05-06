@@ -133,9 +133,9 @@ class Trainer(object):
                     self.tb_writer.add_scalar(
                         "train/he_rot_loss", loss_he_q, iter_no)
                     self.tb_writer.add_scalar(
-                        "train/he_beta", self.train_criterion_he.beta)
+                        "train/he_beta", self.train_criterion_he.beta, iter_no)
                     self.tb_writer.add_scalar(
-                        "train/he_gamma", self.train_criterion_he.gamma)
+                        "train/he_gamma", self.train_criterion_he.gamma, iter_no)
                     self.tb_writer.add_scalar(
                         "train/rel_pose_loss", loss_R, iter_no)
                     self.tb_writer.add_scalar(
@@ -143,23 +143,26 @@ class Trainer(object):
                     self.tb_writer.add_scalar(
                         "train/rel_rot_loss", loss_R_q, iter_no)
                     self.tb_writer.add_scalar(
-                        "train/rel_beta", self.train_criterion_R.beta)
+                        "train/rel_beta", self.train_criterion_R.beta, iter_no)
                     self.tb_writer.add_scalar(
-                        "train/rel_gamma", self.train_criterion_R.gamma)
+                        "train/rel_gamma", self.train_criterion_R.gamma, iter_no)
 
                 if iter_no % config.eval_freq == 0:
                     self.eval(self.train_dataloader, iter_no)
                 iter_no += 1
 
     @torch.no_grad()
-    def eval(self, dataloader, iter_no, max_samples=2000):
+    def eval(self, dataloader, iter_no, max_samples=2000, eval_rel_pose=True):
         self.model.eval()
 
         # loss functions
         def t_criterion(t_pred, t_gt): return np.linalg.norm(t_pred - t_gt)
         q_criterion = p_utils.quaternion_angular_error
-        t_loss = []
-        q_loss = []
+        t_loss_he = []
+        q_loss_he = []
+        if eval_rel_pose:
+            t_loss_rel = []
+            q_loss_rel = []
         num_samples = 0
 
         # inference loop
@@ -168,42 +171,64 @@ class Trainer(object):
 
             num_samples += data.num_graphs
             data = data.to(self.device)
-            output_he, _, _ = self.model(data)
+            output_he, output_R, _ = self.model(data)
             output_he = output_he.cpu().data.numpy()
-            target = data.y.to('cpu').numpy()
+            target_he = data.y.to('cpu').numpy()
 
             # normalize the predicted quaternions
             q = [p_utils.qexp(p[3:]) for p in output_he]
             output_he = np.hstack((output_he[:, :3], np.asarray(q)))
-            q = [p_utils.qexp(p[3:]) for p in target]
-            target = np.hstack((target[:, :3], np.asarray(q)))
+            q = [p_utils.qexp(p[3:]) for p in target_he]
+            target_he = np.hstack((target_he[:, :3], np.asarray(q)))
 
             # calculate losses
-            for p, t in zip(output_he, target):
-                t_loss.append(t_criterion(p[:3], t[:3]))
-                q_loss.append(q_criterion(p[3:], t[3:]))
+            for p, t in zip(output_he, target_he):
+                t_loss_he.append(t_criterion(p[:3], t[:3]))
+                q_loss_he.append(q_criterion(p[3:], t[3:]))
+
+            if eval_rel_pose:
+                output_rel = output_rel.cpu().data.numpy()
+                # normalize the predicted quaternions
+                target_rel = data.y_edge.to('cpu').numpy()
+
+                q = [p_utils.qexp(p[3:]) for p in output_rel]
+                output_rel = np.hstack((output_rel[:, :3], np.asarray(q)))
+                q = [p_utils.qexp(p[3:]) for p in target_rel]
+                target_rel = np.hstack((target_rel[:, :3], np.asarray(q)))
+
+                for p, t in zip(output_rel, target_rel):
+                    t_loss_rel.append(t_criterion(p[:3], t[:3]))
+                    q_loss_rel.append(q_criterion(p[3:], t[3:]))
 
             if num_samples > max_samples:
                 break
 
-        median_t = np.median(t_loss)
-        median_q = np.median(q_loss)
-        mean_t = np.mean(t_loss)
-        mean_q = np.mean(q_loss)
+        median_t_he = np.median(t_loss_he)
+        median_q_he = np.median(q_loss_he)
+        mean_t_he = np.mean(t_loss_he)
+        mean_q_he = np.mean(q_loss_he)
 
         print(f'Iter No [{iter_no:04d}] Error in translation:'
-              f' median {median_t:3.2f} m,'
-              f' mean {mean_t:3.2f} m'
+              f' median {median_t_he:3.2f} m,'
+              f' mean {mean_t_he:3.2f} m'
               f'\tError in rotation:'
-              f' median {median_q:3.2f} degrees,'
-              f' mean {mean_q:3.2f} degrees')
+              f' median {median_q_he:3.2f} degrees,'
+              f' mean {mean_q_he:3.2f} degrees')
 
-        self.tb_writer.add_scalar("test/trans_medain", median_t, iter_no)
-        self.tb_writer.add_scalar("test/trans_mean", mean_t, iter_no)
-        self.tb_writer.add_scalar("test/rot_median", median_q, iter_no)
-        self.tb_writer.add_scalar("test/rot_mean", mean_q, iter_no)
+        self.tb_writer.add_scalar("test/he_trans_medain", median_t_he, iter_no)
+        self.tb_writer.add_scalar("test/he_trans_mean", mean_t_he, iter_no)
+        self.tb_writer.add_scalar("test/he_rot_median", median_q_he, iter_no)
+        self.tb_writer.add_scalar("test/he_rot_mean", mean_q_he, iter_no)
 
-        return median_t, mean_t, median_q, mean_q
+        if eval_rel_pose:
+            self.tb_writer.add_scalar(
+                "test/rel_trans_medain", np.median(t_loss_rel), iter_no)
+            self.tb_writer.add_scalar(
+                "test/rel_trans_mean", np.mean(t_loss_rel), iter_no)
+            self.tb_writer.add_scalar(
+                "test/rel_rot_median", np.median(q_loss_rel), iter_no)
+            self.tb_writer.add_scalar(
+                "test/rel_rot_mean", np.mean(q_loss_rel), iter_no)
 
     def save_model(self):
         save_dir = self.config.model_save_dir / self.config.model_name / self.run_id
