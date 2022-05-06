@@ -161,8 +161,8 @@ class Trainer(object):
         t_loss_he = []
         q_loss_he = []
         if eval_rel_pose:
-            t_loss_rel = []
-            q_loss_rel = []
+            t_loss_R = []
+            q_loss_R = []
         num_samples = 0
 
         # inference loop
@@ -187,18 +187,18 @@ class Trainer(object):
                 q_loss_he.append(q_criterion(p[3:], t[3:]))
 
             if eval_rel_pose:
-                output_rel = output_rel.cpu().data.numpy()
+                output_R = output_R.cpu().data.numpy()
                 # normalize the predicted quaternions
-                target_rel = data.y_edge.to('cpu').numpy()
+                target_R = data.y_edge.to('cpu').numpy()
 
-                q = [p_utils.qexp(p[3:]) for p in output_rel]
-                output_rel = np.hstack((output_rel[:, :3], np.asarray(q)))
-                q = [p_utils.qexp(p[3:]) for p in target_rel]
-                target_rel = np.hstack((target_rel[:, :3], np.asarray(q)))
+                q = [p_utils.qexp(p[3:]) for p in output_R]
+                output_R = np.hstack((output_R[:, :3], np.asarray(q)))
+                q = [p_utils.qexp(p[3:]) for p in target_R]
+                target_R = np.hstack((target_R[:, :3], np.asarray(q)))
 
-                for p, t in zip(output_rel, target_rel):
-                    t_loss_rel.append(t_criterion(p[:3], t[:3]))
-                    q_loss_rel.append(q_criterion(p[3:], t[3:]))
+                for p, t in zip(output_R, target_R):
+                    t_loss_R.append(t_criterion(p[:3], t[:3]))
+                    q_loss_R.append(q_criterion(p[3:], t[3:]))
 
             if num_samples > max_samples:
                 break
@@ -222,13 +222,13 @@ class Trainer(object):
 
         if eval_rel_pose:
             self.tb_writer.add_scalar(
-                "test/rel_trans_medain", np.median(t_loss_rel), iter_no)
+                "test/rel_trans_medain", np.median(t_loss_R), iter_no)
             self.tb_writer.add_scalar(
-                "test/rel_trans_mean", np.mean(t_loss_rel), iter_no)
+                "test/rel_trans_mean", np.mean(t_loss_R), iter_no)
             self.tb_writer.add_scalar(
-                "test/rel_rot_median", np.median(q_loss_rel), iter_no)
+                "test/rel_rot_median", np.median(q_loss_R), iter_no)
             self.tb_writer.add_scalar(
-                "test/rel_rot_mean", np.mean(q_loss_rel), iter_no)
+                "test/rel_rot_mean", np.mean(q_loss_R), iter_no)
 
     def save_model(self):
         save_dir = self.config.model_save_dir / self.config.model_name / self.run_id
