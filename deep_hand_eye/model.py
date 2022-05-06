@@ -130,6 +130,7 @@ class GCNet(nn.Module):
         self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
         # setup the hand-eye regression networks
+        self.edge_he = nn.Linear(edge_feat_dim+6, edge_feat_dim)
         self.edge_attn_he = nn.Linear(edge_feat_dim, 1)
         self.fc_xyz_he = nn.Linear(edge_feat_dim, 3)
         self.fc_wpqr_he = nn.Linear(edge_feat_dim, 3)
@@ -178,13 +179,15 @@ class GCNet(nn.Module):
         wpqr_R = self.fc_wpqr_R(edge_feat)
 
         # Predict the hand-eye parameters
-        edge_he_logits = self.edge_attn_he(edge_feat).squeeze().repeat(data.num_graphs, 1)
+        edge_he_feat = self.edge_he(torch.cat([edge_feat, edge_attr], dim=-1))
+
+        edge_he_logits = self.edge_attn_he(edge_he_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
         num_graphs = torch.arange(0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
         
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
-        edge_he_aggr = torch.matmul(edge_he_attn, edge_feat)
+        edge_he_aggr = torch.matmul(edge_he_attn, edge_he_feat)
 
         xyz_he = self.fc_xyz_he(edge_he_aggr)
         wpqr_he = self.fc_wpqr_he(edge_he_aggr)
