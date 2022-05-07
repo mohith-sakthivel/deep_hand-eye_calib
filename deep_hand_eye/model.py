@@ -64,25 +64,26 @@ class SimpleConvEdgeUpdate(MessagePassing):
     Network to pass messages and update the nodes
     """
 
-    def __init__(self, in_channels, edge_channels, out_channels, use_attention=True):
+    def __init__(self, node_in_channels, node_out_channels,
+                 edge_in_channels, edge_out_channels, use_attention=True):
         super().__init__(aggr='mean')
 
         self.edge_update_mlp = SimpleEdgeModel(
-            in_channels, edge_channels+6, edge_channels)
+            node_in_channels, edge_in_channels, edge_out_channels)
 
         self.msg_mlp = nn.Sequential(
-            nn.Linear(in_channels + edge_channels, out_channels),
+            nn.Linear(node_in_channels + edge_out_channels, node_out_channels),
             nn.ReLU(inplace=True),
-            nn.Linear(out_channels, out_channels))
+            nn.Linear(node_out_channels, node_out_channels))
 
         self.node_update_mlp = nn.Sequential(
-            nn.Linear(in_channels+out_channels, out_channels),
+            nn.Linear(node_in_channels + node_out_channels, node_out_channels),
             nn.ReLU(inplace=True),
-            nn.Linear(out_channels, out_channels)
+            nn.Linear(node_out_channels, node_out_channels)
         )
 
         if use_attention:
-            self.att = AttentionBlock(in_channels)
+            self.att = AttentionBlock(node_out_channels)
 
     def forward(self, x, edge_index, edge_attr):
         row, col = edge_index
@@ -123,7 +124,7 @@ class GCNet(nn.Module):
 
         # setup the message passing network
         self.gnn_layer = SimpleConvEdgeUpdate(
-            node_feat_dim, edge_feat_dim, node_feat_dim)
+            node_feat_dim, node_feat_dim, edge_feat_dim, edge_feat_dim + 6)
 
         # setup the relative pose regression networks
         self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
