@@ -128,7 +128,7 @@ class GCNet(nn.Module):
 
         # setup the message passing network
         self.gnn_layer = SimpleConvEdgeUpdate(
-            node_feat_dim, node_feat_dim, edge_feat_dim, edge_feat_dim + pose_proj_dim)
+            node_feat_dim, node_feat_dim, edge_feat_dim + pose_proj_dim, edge_feat_dim)
 
         # setup the relative pose regression networks
         self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
