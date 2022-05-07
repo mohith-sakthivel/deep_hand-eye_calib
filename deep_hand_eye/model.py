@@ -107,11 +107,12 @@ class SimpleConvEdgeUpdate(MessagePassing):
 class GCNet(nn.Module):
 
     def __init__(self, node_feat_dim=1024, edge_feat_dim=1024,
-                 gnn_recursion=2, droprate=0.0) -> None:
+                 gnn_recursion=2, droprate=0.0, pose_proj_dim=32) -> None:
 
         super().__init__()
         self.gnn_recursion = gnn_recursion
         self.droprate = droprate
+        self.pose_proj_dim = pose_proj_dim
 
         # setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
@@ -119,19 +120,22 @@ class GCNet(nn.Module):
         self.feature_extractor.fc = nn.Linear(self.feature_extractor.fc.in_features,
                                               node_feat_dim)
 
+        # project relative robot displacement
+        self.proj_rel_disp = nn.Linear(6, self.pose_proj_dim)
         # intial edge project layer
-        self.proj_init_edge = nn.Linear(2 * node_feat_dim + 6, edge_feat_dim)
+        self.proj_init_edge = nn.Linear(
+            2 * node_feat_dim + pose_proj_dim, edge_feat_dim)
 
         # setup the message passing network
         self.gnn_layer = SimpleConvEdgeUpdate(
-            node_feat_dim, node_feat_dim, edge_feat_dim, edge_feat_dim + 6)
+            node_feat_dim, node_feat_dim, edge_feat_dim, edge_feat_dim + pose_proj_dim)
 
         # setup the relative pose regression networks
         self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
         self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
         # setup the hand-eye regression networks
-        self.edge_he = nn.Linear(edge_feat_dim+6, edge_feat_dim)
+        self.edge_he = nn.Linear(edge_feat_dim + pose_proj_dim, edge_feat_dim)
         self.edge_attn_he = nn.Linear(edge_feat_dim, 1)
         self.fc_xyz_he = nn.Linear(edge_feat_dim, 3)
         self.fc_wpqr_he = nn.Linear(edge_feat_dim, 3)
@@ -160,19 +164,20 @@ class GCNet(nn.Module):
         x = self.feature_extractor(x)
 
         # Compute edge features
-        edge_node_feat = self.join_node_edge_feat(x, edge_index, edge_attr)
-        edge_feat = F.relu(self.proj_init_edge(edge_node_feat))
+        rel_disp_feat = F.relu(self.proj_rel_disp(edge_attr), inplace=True)
+        edge_node_feat = self.join_node_edge_feat(x, edge_index, rel_disp_feat)
+        edge_feat = F.relu(self.proj_init_edge(edge_node_feat), inplace=True)
 
         # Graph message passing step
         for _ in range(self.gnn_recursion):
-            edge_feat = torch.cat([edge_feat, edge_attr], dim=-1)
+            edge_feat = torch.cat([edge_feat, rel_disp_feat], dim=-1)
             x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
             x = F.relu(x)
             edge_feat = F.relu(edge_feat)
 
         # Drop node and edge features if necessary
         if self.droprate > 0:
-            x = F.dropout(x, p=self.droprate, training=self.training)
+            # x = F.dropout(x, p=self.droprate, training=self.training)
             edge_feat = F.dropout(
                 edge_feat, p=self.droprate, training=self.training)
 
@@ -180,18 +185,20 @@ class GCNet(nn.Module):
         xyz_R = self.fc_xyz_R(edge_feat)
         wpqr_R = self.fc_wpqr_R(edge_feat)
 
-        # Predict the hand-eye parameters
-        edge_he_feat = self.edge_he(torch.cat([edge_feat, edge_attr], dim=-1))
+        # Process edge features for regressing hand-eye parameters
+        edge_he_feat = self.edge_he(torch.cat([edge_feat, rel_disp_feat], dim=-1))
+        # Calculate the attention weight over the edges
         edge_he_logits = self.edge_attn_he(
             edge_he_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
         num_graphs = torch.arange(
             0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
-
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
+        # Apply attention
         edge_he_aggr = torch.matmul(edge_he_attn, edge_he_feat)
 
+        # Predict the hand-eye parameters
         xyz_he = self.fc_xyz_he(edge_he_aggr)
         wpqr_he = self.fc_wpqr_he(edge_he_aggr)
 
