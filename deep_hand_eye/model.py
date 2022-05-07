@@ -11,16 +11,16 @@ class SimpleEdgeModel(nn.Module):
     Network to perform autoregressive edge update during Neural message passing
     """
 
-    def __init__(self, in_channels, edge_channels, out_channels):
+    def __init__(self, node_channels, edge_in_channels, edge_out_channels):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.edge_channels = edge_channels
+        self.node_channels = node_channels
+        self.edge_in_channels = edge_in_channels
+        self.edge_out_channels = edge_out_channels
 
         self.edge_mlp = nn.Sequential(
-            nn.Linear(2 * in_channels + edge_channels, out_channels),
-            nn.ReLU(),
-            nn.Linear(out_channels, out_channels)
+            nn.Linear(2 * node_channels + edge_in_channels, edge_out_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(edge_out_channels, edge_out_channels)
         )
 
     def forward(self, source, target, edge_attr):
@@ -67,19 +67,19 @@ class SimpleConvEdgeUpdate(MessagePassing):
     def __init__(self, in_channels, edge_channels, out_channels, use_attention=True):
         super().__init__(aggr='mean')
 
+        self.edge_update_mlp = SimpleEdgeModel(
+            in_channels, edge_channels+6, edge_channels)
+
         self.msg_mlp = nn.Sequential(
             nn.Linear(in_channels + edge_channels, out_channels),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(out_channels, out_channels))
 
         self.node_update_mlp = nn.Sequential(
-            nn.Linear(2 * in_channels, out_channels),
-            nn.ReLU(),
+            nn.Linear(in_channels+out_channels, out_channels),
+            nn.ReLU(inplace=True),
             nn.Linear(out_channels, out_channels)
         )
-
-        self.edge_update_mlp = SimpleEdgeModel(
-            in_channels, edge_channels, edge_channels)
 
         if use_attention:
             self.att = AttentionBlock(in_channels)
@@ -145,26 +145,26 @@ class GCNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0)
 
-    def join_node_features(self, x, edge_index, edge_attr):
+    def join_node_edge_feat(self, node_feat, edge_index, edge_feat):
         # join node features of a corresponding edge
         # introduce invariance to edge direction (?)
-        edge_feat = torch.cat(
-            (x[edge_index[0], ...],
-             x[edge_index[1], ...],
-             edge_attr), dim=1)
-        return edge_feat
+        out_feat = torch.cat(
+            (node_feat[edge_index[0], ...],
+             node_feat[edge_index[1], ...],
+             edge_feat), dim=1)
+        return out_feat
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         x = self.feature_extractor(x)
 
         # Compute edge features
-        edge_node_feat = self.join_node_features(x, edge_index, edge_attr)
-        edge_feat = self.proj_init_edge(edge_node_feat)
-        edge_feat = F.relu(edge_feat)
+        edge_node_feat = self.join_node_edge_feat(x, edge_index, edge_attr)
+        edge_feat = F.relu(self.proj_init_edge(edge_node_feat))
 
         # Graph message passing step
         for _ in range(self.gnn_recursion):
+            edge_feat = torch.cat([edge_feat, edge_attr], dim=-1)
             x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
             x = F.relu(x)
             edge_feat = F.relu(edge_feat)
@@ -172,7 +172,8 @@ class GCNet(nn.Module):
         # Drop node and edge features if necessary
         if self.droprate > 0:
             x = F.dropout(x, p=self.droprate, training=self.training)
-            edge_feat = F.dropout(edge_feat, p=self.droprate, training=self.training)
+            edge_feat = F.dropout(
+                edge_feat, p=self.droprate, training=self.training)
 
         # Predict the relative pose between images
         xyz_R = self.fc_xyz_R(edge_feat)
@@ -180,12 +181,13 @@ class GCNet(nn.Module):
 
         # Predict the hand-eye parameters
         edge_he_feat = self.edge_he(torch.cat([edge_feat, edge_attr], dim=-1))
-
-        edge_he_logits = self.edge_attn_he(edge_he_feat).squeeze().repeat(data.num_graphs, 1)
+        edge_he_logits = self.edge_attn_he(
+            edge_he_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
-        num_graphs = torch.arange(0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
+        num_graphs = torch.arange(
+            0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
-        
+
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
         edge_he_aggr = torch.matmul(edge_he_attn, edge_he_feat)
 
