@@ -10,7 +10,7 @@ from deep_hand_eye.dataset import MVSDataset
 
 def test_dataset(test_size=64):
 
-    dataset = MVSDataset(max_rot_offset=0)
+    dataset = MVSDataset(max_rot_offset=45)
     train_loader = DataLoader(dataset, batch_size=test_size, shuffle=True)
     data = next(iter(train_loader))
     print("Starting verificaiton...")
@@ -21,7 +21,8 @@ def test_dataset(test_size=64):
         hand_eye_quat = p_utils.qexp(hand_eye[3:])[[1, 2, 3, 0]]
         hand_eye_homogenous = R.from_quat(hand_eye_quat).as_matrix()
         hand_eye_translate = np.array(hand_eye[:3]).reshape(-1, 1)
-        hand_eye_homogenous = np.hstack([hand_eye_homogenous, hand_eye_translate])
+        hand_eye_homogenous = np.hstack(
+            [hand_eye_homogenous, hand_eye_translate])
         hand_eye_homogenous = np.vstack([hand_eye_homogenous, [0, 0, 0, 1]])
 
         for i, (from_idx, to_idx) in enumerate(data[n].edge_index.T):
@@ -44,7 +45,8 @@ def test_dataset(test_size=64):
             err_residuals = cam_homogenous - \
                 p_utils.invert_homo(
                     hand_eye_homogenous) @ ee_homogenous @ hand_eye_homogenous
-            assert np.all(np.abs(err_residuals) < 1e-6)
+            assert np.all(np.abs(err_residuals) < 1e-5)
+
 
 if __name__ == "__main__":
     test_dataset()

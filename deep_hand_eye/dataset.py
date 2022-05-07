@@ -35,7 +35,7 @@ class MVSDataset(Dataset):
 
         # Translational and rotational magnitude
         self.max_trans_offset = max_trans_offset
-        self.max_rot_offset = max_rot_offset
+        self.max_rot_offset = np.deg2rad(max_rot_offset)
 
         if transform == None:
             self.transform = transforms.Compose([
@@ -71,31 +71,23 @@ class MVSDataset(Dataset):
             hand_eye : hand eye translation vector used to generate data
         """
         # Random hand-eye transform matrix
-        trans_vec = np.random.uniform(-1, 1, 3)
-        trans_vec = trans_vec / np.linalg.norm(trans_vec)
-        hand_trans = np.random.uniform(0, self.max_trans_offset) * trans_vec
+        def sample_unit_vector():
+            vector = np.random.uniform(-1, 1, 3)
+            return vector / np.linalg.norm(vector)
+
+        hand_eye_trans = np.random.uniform(
+            0, self.max_trans_offset) * sample_unit_vector()
         # Random rotational angle
-        hand_rpy = np.random.uniform(-self.max_rot_offset,
-                                     self.max_rot_offset, 3)
-        # Roll matrix
-        hand_roll = np.array([[1, 0, 0],
-                              [0, np.cos(hand_rpy[0]), -np.sin(hand_rpy[0])],
-                              [0, np.sin(hand_rpy[0]), np.cos(hand_rpy[0])]])
-        # Pitch matrix
-        hand_pitch = np.array([[np.cos(hand_rpy[1]), 0, np.sin(hand_rpy[1])],
-                               [0, 1, 0],
-                               [-np.sin(hand_rpy[1]), 0, np.cos(hand_rpy[1])]])
-        # Yaw matrix
-        hand_yaw = np.array([[np.cos(hand_rpy[2]), -np.sin(hand_rpy[2]), 0],
-                            [np.sin(hand_rpy[2]), np.cos(hand_rpy[2]), 0],
-                            [0, 0, 1]])
-        # Combined rotational matrix
-        hand_rotation = hand_yaw @ hand_pitch @ hand_roll
+        hand_eye_angle = np.random.uniform(-self.max_rot_offset,
+                                           self.max_rot_offset)
+        hand_eye_axis = sample_unit_vector()
+        hand_eye_rotation = R.from_rotvec(
+            hand_eye_angle * hand_eye_axis).as_matrix()
 
         # Hand-eye transformation matrix
         hand_eye_matrix = np.zeros((4, 4))
-        hand_eye_matrix[:3, 3] = hand_trans
-        hand_eye_matrix[:3, :3] = hand_rotation
+        hand_eye_matrix[:3, 3] = hand_eye_trans
+        hand_eye_matrix[:3, :3] = hand_eye_rotation
         hand_eye_matrix[3, 3] = 1
         # Get inverse to multiply onto absolute positions
         hand_eye_inv = p_utils.invert_homo(hand_eye_matrix)
@@ -142,7 +134,8 @@ class MVSDataset(Dataset):
         image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
-        rel_ee_transforms = np.zeros((self.edge_index.shape[1], 6), dtype=np.float32)
+        rel_ee_transforms = np.zeros(
+            (self.edge_index.shape[1], 6), dtype=np.float32)
         rel_cam_transforms = np.zeros_like(rel_ee_transforms)
         # List of end effector poses
         ee_poses = []
@@ -178,12 +171,15 @@ class MVSDataset(Dataset):
                 # Get rotation to put transform based on to/from indices
                 edge_idx = index_idx + from_idx*(self.num_nodes-1)
                 # For the end effector
-                rel_ee = p_utils.invert_homo(ee_poses[from_idx]) @ ee_poses[to_idx]
+                rel_ee = p_utils.invert_homo(
+                    ee_poses[from_idx]) @ ee_poses[to_idx]
                 rel_ee_transforms[edge_idx] = p_utils.homo_to_log_quat(rel_ee)
 
                 # For the camera pose
-                rel_cam = p_utils.invert_homo(cam_poses[from_idx]) @ cam_poses[to_idx]
-                rel_cam_transforms[edge_idx] = p_utils.homo_to_log_quat(rel_cam)
+                rel_cam = p_utils.invert_homo(
+                    cam_poses[from_idx]) @ cam_poses[to_idx]
+                rel_cam_transforms[edge_idx] = p_utils.homo_to_log_quat(
+                    rel_cam)
 
                 # Increment index to store transformations
                 index_idx += 1
