@@ -17,7 +17,7 @@ import deep_hand_eye.pose_utils as p_utils
 class MVSDataset(Dataset):
     def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
                  json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
-                 max_trans_offset=0.3, max_rot_offset=0.0, transform=None, image_size=(256, 256)):
+                 max_trans_offset=0.3, max_rot_offset=90.0, transform=None, image_size=(256, 256)):
         # Storing the image folder
         self.image_folder = image_folder
 

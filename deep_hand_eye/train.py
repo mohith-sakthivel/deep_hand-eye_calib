@@ -21,13 +21,14 @@ config = utils.AttrDict()
 config.seed = 0
 config.device = "cuda"
 config.num_workers = 8
-config.epochs = 25
+config.epochs = 40
 config.save_dir = ""
 config.model_name = ""
 config.save_model = True  # save model parameters?
-config.batch_size = 8
+config.batch_size = 16
 config.eval_freq = 2000
-config.log_freq = 20
+config.log_freq = 20    # Iters to log after
+config.save_freq = 5   # Epochs to save after
 config.aux_coeffs = {
     "rel_cam_pose": 1
 }
@@ -58,7 +59,7 @@ class Trainer(object):
         self.learn_loss_coeffs = True
         self.run_id = datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
 
-        if config.device == "cpu" or not torch.cuda.is_available():
+        if self.config.device == "cpu" or not torch.cuda.is_available():
             self.device = "cpu"
         else:
             self.device = "cuda"
@@ -122,7 +123,7 @@ class Trainer(object):
                 loss_total.backward()
                 self.optimizer.step()
 
-                if iter_no % config.log_freq == 0:
+                if iter_no % self.config.log_freq == 0:
                     self.tb_writer.add_scalar("train/epoch", epoch, iter_no)
                     self.tb_writer.add_scalar(
                         "train/total_loss", loss_total, iter_no)
@@ -147,10 +148,13 @@ class Trainer(object):
                     self.tb_writer.add_scalar(
                         "train/rel_gamma", self.train_criterion_R.gamma, iter_no)
 
-                if iter_no % config.eval_freq == 0:
+                if iter_no % self.config.eval_freq == 0:
                     self.eval(self.train_dataloader, iter_no)
                     self.model.train()
                 iter_no += 1
+        
+            if epoch > 0 and (epoch+1) % self.config.save_freq == 0:
+                self.save_model()
 
     @torch.no_grad()
     def eval(self, dataloader, iter_no, max_samples=2000, eval_rel_pose=True):
@@ -242,7 +246,6 @@ def main():
     seed_everything(0)
     trainer = Trainer(config=config)
     trainer.train()
-    trainer.save_model()
 
 
 if __name__ == "__main__":
