@@ -149,6 +149,7 @@ class Trainer(object):
 
                 if iter_no % config.eval_freq == 0:
                     self.eval(self.train_dataloader, iter_no)
+                    self.model.train()
                 iter_no += 1
 
     @torch.no_grad()
