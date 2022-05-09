@@ -32,11 +32,13 @@ class SimpleEdgeModel(nn.Module):
 class AttentionBlock(nn.Module):
     """
     Network to apply non-local attention
+    (Refer: https://arxiv.org/abs/1711.07971)
     """
 
     def __init__(self, in_channels, N=8):
         super(AttentionBlock, self).__init__()
         self.N = N
+        self.in_channels = in_channels
         self.W_theta = nn.Linear(in_channels, in_channels // N)
         self.W_phi = nn.Linear(in_channels, in_channels // N)
 
@@ -44,22 +46,19 @@ class AttentionBlock(nn.Module):
         self.W_g = nn.Linear(in_channels // N, in_channels)
 
     def forward(self, x):
-        batch_size = x.size(0)
-        out_channels = x.size(1)
-
-        theta_x = self.W_theta(x).view(batch_size, out_channels // self.N, 1)
-        phi_x = self.W_phi(x).view(batch_size, out_channels // self.N, 1)
+        # Calculate attention map for low-dim features
+        theta_x = self.W_theta(x).unsqueeze(dim=-1)
+        phi_x = self.W_phi(x).unsqueeze(dim=-1)
         phi_x = phi_x.permute(0, 2, 1)
         W_ji = F.softmax(torch.matmul(theta_x, phi_x), dim=-1)
-
-        t = self.W_f(x).view(batch_size, out_channels // self.N, 1)
-        t = torch.matmul(W_ji, t)
-        t = t.view(batch_size, out_channels // self.N)
+        # Project to low-dim, apply attention, reproject to original dim
+        t = self.W_f(x).unsqueeze(dim=-1)
+        t = torch.matmul(W_ji, t).squeeze()
         a_ij = self.W_g(t)
         return x + a_ij
 
 
-class SimpleConvEdgeUpdate(MessagePassing):
+class SimpleEdgeUpdate(MessagePassing):
     """
     Network to pass messages and update the nodes
     """
@@ -67,6 +66,8 @@ class SimpleConvEdgeUpdate(MessagePassing):
     def __init__(self, node_in_channels, node_out_channels,
                  edge_in_channels, edge_out_channels, use_attention=True):
         super().__init__(aggr='mean')
+
+        self.use_attention = use_attention
 
         self.edge_update_mlp = SimpleEdgeModel(
             node_in_channels, edge_in_channels, edge_out_channels)
@@ -87,19 +88,24 @@ class SimpleConvEdgeUpdate(MessagePassing):
 
     def forward(self, x, edge_index, edge_attr):
         row, col = edge_index
+        # Update edge features
         edge_attr = self.edge_update_mlp(x[row], x[col], edge_attr)
 
-        # x has shape [N, in_channels] and edge_index has shape [2, E]
+        # Propogate messages
         out = self.propagate(edge_index, size=(
             x.size(0), x.size(0)), x=x, edge_attr=edge_attr)
         return out, edge_attr
 
     def message(self, x_i, x_j, edge_attr):
+        # Generate message to target nodes
         msg = self.msg_mlp(torch.cat([x_j, edge_attr], dim=1))
-        msg = self.att(msg)
+        # Decide which features to attent for each individual message
+        if self.use_attention:
+            msg = self.att(msg)
         return msg
 
     def update(self, aggr_out, x):
+        # Update target node with aggregated messages
         out = self.node_update_mlp(torch.cat([x, aggr_out], dim=1))
         return out
 
@@ -114,27 +120,27 @@ class GCNet(nn.Module):
         self.droprate = droprate
         self.pose_proj_dim = pose_proj_dim
 
-        # setup the feature extractor
+        # Setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
         self.feature_extractor.avgpool = nn.AdaptiveAvgPool2d(1)
         self.feature_extractor.fc = nn.Linear(self.feature_extractor.fc.in_features,
                                               node_feat_dim)
 
-        # project relative robot displacement
+        # Project relative robot displacement
         self.proj_rel_disp = nn.Linear(6, self.pose_proj_dim)
-        # intial edge project layer
+        # Intial edge projection layer
         self.proj_init_edge = nn.Linear(
             2 * node_feat_dim + pose_proj_dim, edge_feat_dim)
 
-        # setup the message passing network
-        self.gnn_layer = SimpleConvEdgeUpdate(
+        # Setup the message passing network
+        self.gnn_layer = SimpleEdgeUpdate(
             node_feat_dim, node_feat_dim, edge_feat_dim + pose_proj_dim, edge_feat_dim)
 
-        # setup the relative pose regression networks
+        # Setup the relative pose regression networks
         self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
         self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
-        # setup the hand-eye regression networks
+        # Setup the hand-eye regression networks
         self.edge_he = nn.Linear(edge_feat_dim + pose_proj_dim, edge_feat_dim)
         self.edge_attn_he = nn.Linear(edge_feat_dim, 1)
         self.fc_xyz_he = nn.Linear(edge_feat_dim, 3)
@@ -151,8 +157,7 @@ class GCNet(nn.Module):
                     nn.init.constant_(m.bias.data, 0)
 
     def join_node_edge_feat(self, node_feat, edge_index, edge_feat):
-        # join node features of a corresponding edge
-        # introduce invariance to edge direction (?)
+        # Join edge features with corresponding node features
         out_feat = torch.cat(
             (node_feat[edge_index[0], ...],
              node_feat[edge_index[1], ...],
@@ -172,7 +177,7 @@ class GCNet(nn.Module):
         for _ in range(self.gnn_recursion):
             edge_feat = torch.cat([edge_feat, rel_disp_feat], dim=-1)
             x, edge_feat = self.gnn_layer(x, edge_index, edge_feat)
-            x = F.relu(x)
+            x = F.relu(x, inplace=True)
             edge_feat = F.relu(edge_feat)
 
         # Drop node and edge features if necessary
@@ -186,8 +191,9 @@ class GCNet(nn.Module):
         wpqr_R = self.fc_wpqr_R(edge_feat)
 
         # Process edge features for regressing hand-eye parameters
-        edge_he_feat = self.edge_he(torch.cat([edge_feat, rel_disp_feat], dim=-1))
-        # Calculate the attention weight over the edges
+        edge_he_feat = self.edge_he(
+            torch.cat([edge_feat, rel_disp_feat], dim=-1))
+        # Calculate the attention weights over the edges
         edge_he_logits = self.edge_attn_he(
             edge_he_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]

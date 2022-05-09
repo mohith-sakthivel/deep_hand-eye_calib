@@ -220,7 +220,7 @@ class Trainer(object):
               f' median {median_q_he:3.2f} degrees,'
               f' mean {mean_q_he:3.2f} degrees')
 
-        self.tb_writer.add_scalar("test/he_trans_medain", median_t_he, iter_no)
+        self.tb_writer.add_scalar("test/he_trans_median", median_t_he, iter_no)
         self.tb_writer.add_scalar("test/he_trans_mean", mean_t_he, iter_no)
         self.tb_writer.add_scalar("test/he_rot_median", median_q_he, iter_no)
         self.tb_writer.add_scalar("test/he_rot_mean", mean_q_he, iter_no)
