@@ -13,22 +13,29 @@ from torch_geometric.loader import DataLoader
 import deep_hand_eye.utils as utils
 import deep_hand_eye.pose_utils as p_utils
 from deep_hand_eye.model import GCNet
+from deep_hand_eye.mlp_model import MLPGCNet
 from deep_hand_eye.dataset import MVSDataset
 from deep_hand_eye.losses import PoseNetCriterion
 
 
+MODELS = {
+    "cnn": GCNet,
+    "mlp": MLPGCNet
+}
+
+
 config = utils.AttrDict()
 config.seed = 0
+config.model = "cnn"
 config.device = "cuda"
 config.num_workers = 8
 config.epochs = 40
 config.save_dir = ""
 config.model_name = ""
-config.save_model = True  # save model parameters?
 config.batch_size = 16
 config.eval_freq = 2000
 config.log_freq = 20    # Iters to log after
-config.save_freq = 5   # Epochs to save after
+config.save_freq = 5   # Epochs to save after. Set None to not save.
 config.aux_coeffs = {
     "rel_cam_pose": 1
 }
@@ -72,7 +79,7 @@ class Trainer(object):
                                            shuffle=True, num_workers=self.config.num_workers)
 
         # Define the model
-        self.model = GCNet().to(self.device)
+        self.model = MODELS[self.config.model]().to(self.device)
         self.model_parameters = filter(
             lambda p: p.requires_grad, self.model.parameters())
         self.params = sum([np.prod(p.size()) for p in self.model_parameters])
@@ -152,8 +159,8 @@ class Trainer(object):
                     self.eval(self.train_dataloader, iter_no)
                     self.model.train()
                 iter_no += 1
-        
-            if epoch > 0 and (epoch+1) % self.config.save_freq == 0:
+
+            if epoch > 0 and self.config.save_freq is not None and (epoch+1) % self.config.save_freq == 0:
                 self.save_model()
 
     @torch.no_grad()
