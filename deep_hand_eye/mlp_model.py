@@ -140,8 +140,8 @@ class MLPGCNet(nn.Module):
 
         # Setup the relative pose regression networks
         if self.rel_pose:
-            self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
-            self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
+            self.fc_xyz_R = nn.Linear(edge_feat_dim, 3)
+            self.fc_wpqr_R = nn.Linear(edge_feat_dim, 3)
 
         # Setup the hand-eye regression networks
         self.edge_he = nn.Linear(edge_feat_dim + pose_proj_dim, edge_feat_dim)

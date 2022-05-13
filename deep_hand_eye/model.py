@@ -159,10 +159,10 @@ class GCNet(nn.Module):
 
         # setup the relative pose regression networks
         if self.rel_pose:
-            self.edge_R = nn.Conv2d(node_feat_dim, node_feat_dim,
+            self.edge_R = nn.Conv2d(edge_feat_dim, edge_feat_dim,
                                     kernel_size=3, stride=1, padding=0)
-            self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
-            self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
+            self.fc_xyz_R = nn.Linear(edge_feat_dim, 3)
+            self.fc_wpqr_R = nn.Linear(edge_feat_dim, 3)
 
         # setup the hand-eye regression networks
         self.edge_he = nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim,
