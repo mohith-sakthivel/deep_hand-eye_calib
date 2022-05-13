@@ -83,7 +83,7 @@ class SimpleEdgeUpdate(MessagePassing):
             nn.Linear(node_out_channels, node_out_channels)
         )
 
-        if use_attention:
+        if self.use_attention:
             self.att = AttentionBlock(node_out_channels)
 
     def forward(self, x, edge_index, edge_attr):
@@ -113,12 +113,14 @@ class SimpleEdgeUpdate(MessagePassing):
 class MLPGCNet(nn.Module):
 
     def __init__(self, node_feat_dim=1024, edge_feat_dim=1024,
-                 gnn_recursion=2, droprate=0.0, pose_proj_dim=32) -> None:
+                 gnn_recursion=2, droprate=0.0, pose_proj_dim=32,
+                 rel_pose=True) -> None:
 
         super().__init__()
         self.gnn_recursion = gnn_recursion
         self.droprate = droprate
         self.pose_proj_dim = pose_proj_dim
+        self.rel_pose = rel_pose
 
         # Setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
@@ -137,8 +139,9 @@ class MLPGCNet(nn.Module):
             node_feat_dim, node_feat_dim, edge_feat_dim + pose_proj_dim, edge_feat_dim)
 
         # Setup the relative pose regression networks
-        self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
-        self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
+        if self.rel_pose:
+            self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
+            self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
         # Setup the hand-eye regression networks
         self.edge_he = nn.Linear(edge_feat_dim + pose_proj_dim, edge_feat_dim)
@@ -187,8 +190,12 @@ class MLPGCNet(nn.Module):
                 edge_feat, p=self.droprate, training=self.training)
 
         # Predict the relative pose between images
-        xyz_R = self.fc_xyz_R(edge_feat)
-        wpqr_R = self.fc_wpqr_R(edge_feat)
+        if self.rel_pose:
+            xyz_R = self.fc_xyz_R(edge_feat)
+            wpqr_R = self.fc_wpqr_R(edge_feat)
+            rel_pose_out = torch.cat((xyz_R, wpqr_R), 1)
+        else:
+            rel_pose_out = None
 
         # Process edge features for regressing hand-eye parameters
         edge_he_feat = self.edge_he(
@@ -208,4 +215,4 @@ class MLPGCNet(nn.Module):
         xyz_he = self.fc_xyz_he(edge_he_aggr)
         wpqr_he = self.fc_wpqr_he(edge_he_aggr)
 
-        return torch.cat((xyz_he, wpqr_he), 1), torch.cat((xyz_R, wpqr_R), 1), edge_index
+        return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index

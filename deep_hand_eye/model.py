@@ -79,6 +79,8 @@ class SimpleConvEdgeUpdate(MessagePassing):
                  edge_in_channels, edge_out_channels, use_attention=True):
         super().__init__(aggr='mean')
 
+        self.use_attention = use_attention
+
         self.edge_update_cnn = SimpleEdgeModel(
             node_in_channels, edge_in_channels, edge_out_channels)
 
@@ -97,7 +99,7 @@ class SimpleConvEdgeUpdate(MessagePassing):
                       kernel_size=3, padding=1, stride=1)
         )
 
-        if use_attention:
+        if self.use_attention:
             self.att = AttentionBlock(node_out_channels)
 
     def forward(self, x, edge_index, edge_attr):
@@ -117,8 +119,9 @@ class SimpleConvEdgeUpdate(MessagePassing):
         num_edges = edge_attr.shape[0]
         msg = self.msg_cnn(torch.cat(
             [x_j.view(num_edges, -1, H, W), edge_attr.view(num_edges, -1, H, W)], dim=-3))
-        msg = self.att(msg).view(num_edges, -1)
-        return msg
+        if self.use_attention:
+            msg = self.att(msg)
+        return msg.view(num_edges, -1)
 
     def update(self, aggr_out, x, H, W):
         num_nodes = x.shape[0]
