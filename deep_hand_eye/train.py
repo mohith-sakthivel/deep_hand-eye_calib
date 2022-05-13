@@ -1,6 +1,5 @@
 import os
 import datetime
-import argparse
 import random
 import numpy as np
 from pathlib import Path
@@ -36,9 +35,7 @@ config.batch_size = 16
 config.eval_freq = 2000
 config.log_freq = 20    # Iters to log after
 config.save_freq = 5   # Epochs to save after. Set None to not save.
-config.aux_coeffs = {
-    "rel_cam_pose": 1
-}
+config.rel_pose_coeff = 1   # Set None to remove this auxiliary loss
 config.model_name = ""
 config.log_dir = Path("runs")
 config.model_save_dir = Path("models")
@@ -79,7 +76,7 @@ class Trainer(object):
                                            shuffle=True, num_workers=self.config.num_workers)
 
         # Define the model
-        self.model = MODELS[self.config.model]().to(self.device)
+        self.model = MODELS[self.config.model](rel_pose=self.config.rel_pose_coeff is not None).to(self.device)
         self.model_parameters = filter(
             lambda p: p.requires_grad, self.model.parameters())
         self.params = sum([np.prod(p.size()) for p in self.model_parameters])
@@ -121,11 +118,13 @@ class Trainer(object):
 
                 loss_he, loss_he_t, loss_he_q = self.train_criterion_he(
                     pred_he, target_he)
-                loss_R, loss_R_t, loss_R_q = self.train_criterion_R(
-                    pred_R, target_R)
 
-                loss_total = (loss_he +
-                              self.config.aux_coeffs["rel_cam_pose"] * loss_R)
+                loss_total = loss_he
+
+                if self.config.rel_pose_coeff is not None:
+                    loss_R, loss_R_t, loss_R_q = self.train_criterion_R(
+                        pred_R, target_R)
+                    loss_total += self.config.rel_pose_coeff * loss_R
 
                 loss_total.backward()
                 self.optimizer.step()
@@ -144,19 +143,21 @@ class Trainer(object):
                         "train/he_beta", self.train_criterion_he.beta, iter_no)
                     self.tb_writer.add_scalar(
                         "train/he_gamma", self.train_criterion_he.gamma, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/rel_pose_loss", loss_R, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/rel_trans_loss", loss_R_t, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/rel_rot_loss", loss_R_q, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/rel_beta", self.train_criterion_R.beta, iter_no)
-                    self.tb_writer.add_scalar(
-                        "train/rel_gamma", self.train_criterion_R.gamma, iter_no)
+                    if self.config.rel_pose_coeff is not None:
+                        self.tb_writer.add_scalar(
+                            "train/rel_pose_loss", loss_R, iter_no)
+                        self.tb_writer.add_scalar(
+                            "train/rel_trans_loss", loss_R_t, iter_no)
+                        self.tb_writer.add_scalar(
+                            "train/rel_rot_loss", loss_R_q, iter_no)
+                        self.tb_writer.add_scalar(
+                            "train/rel_beta", self.train_criterion_R.beta, iter_no)
+                        self.tb_writer.add_scalar(
+                            "train/rel_gamma", self.train_criterion_R.gamma, iter_no)
 
                 if iter_no % self.config.eval_freq == 0:
-                    self.eval(self.train_dataloader, iter_no)
+                    self.eval(self.train_dataloader, iter_no,
+                              eval_rel_pose=self.config.rel_pose_coeff is not None)
                     self.model.train()
                 iter_no += 1
 

@@ -18,7 +18,7 @@ class SimpleEdgeModel(nn.Module):
         self.edge_in_channels = edge_in_channels
         self.edge_out_channels = edge_out_channels
 
-        self.edge_mlp = nn.Sequential(
+        self.edge_cnn = nn.Sequential(
             nn.Conv2d(2 * node_channels + edge_in_channels, edge_out_channels,
                       kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
@@ -28,7 +28,7 @@ class SimpleEdgeModel(nn.Module):
 
     def forward(self, source, target, edge_attr):
         out = torch.cat([edge_attr, source, target], dim=1).contiguous()
-        out = self.edge_mlp(out)
+        out = self.edge_cnn(out)
         return out
 
 
@@ -79,17 +79,17 @@ class SimpleConvEdgeUpdate(MessagePassing):
                  edge_in_channels, edge_out_channels, use_attention=True):
         super().__init__(aggr='mean')
 
-        self.edge_update_mlp = SimpleEdgeModel(
+        self.edge_update_cnn = SimpleEdgeModel(
             node_in_channels, edge_in_channels, edge_out_channels)
 
-        self.msg_mlp = nn.Sequential(
+        self.msg_cnn = nn.Sequential(
             nn.Conv2d(node_in_channels + edge_out_channels, node_out_channels,
                       kernel_size=3, padding=1, stride=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(node_out_channels, node_out_channels,
                       kernel_size=3, padding=1, stride=1))
 
-        self.node_update_mlp = nn.Sequential(
+        self.node_update_cnn = nn.Sequential(
             nn.Conv2d(node_in_channels + node_out_channels, node_out_channels,
                       kernel_size=3, padding=1, stride=1),
             nn.ReLU(inplace=True),
@@ -102,7 +102,7 @@ class SimpleConvEdgeUpdate(MessagePassing):
 
     def forward(self, x, edge_index, edge_attr):
         row, col = edge_index
-        edge_attr = self.edge_update_mlp(x[row], x[col], edge_attr)
+        edge_attr = self.edge_update_cnn(x[row], x[col], edge_attr)
 
         # x has shape [N, in_channels] and edge_index has shape [2, E]
         H, W = x.shape[-2:]
@@ -115,14 +115,14 @@ class SimpleConvEdgeUpdate(MessagePassing):
 
     def message(self, x_i, x_j, edge_attr, H, W):
         num_edges = edge_attr.shape[0]
-        msg = self.msg_mlp(torch.cat(
+        msg = self.msg_cnn(torch.cat(
             [x_j.view(num_edges, -1, H, W), edge_attr.view(num_edges, -1, H, W)], dim=-3))
         msg = self.att(msg).view(num_edges, -1)
         return msg
 
     def update(self, aggr_out, x, H, W):
         num_nodes = x.shape[0]
-        out = self.node_update_mlp(torch.cat(
+        out = self.node_update_cnn(torch.cat(
             [x.view(num_nodes, -1, H, W), aggr_out.view(num_nodes, -1, H, W)], dim=-3))
         return out
 
@@ -130,12 +130,14 @@ class SimpleConvEdgeUpdate(MessagePassing):
 class GCNet(nn.Module):
 
     def __init__(self, node_feat_dim=512, edge_feat_dim=512,
-                 gnn_recursion=2, droprate=0.0, pose_proj_dim=32) -> None:
+                 gnn_recursion=2, droprate=0.0, pose_proj_dim=32,
+                 rel_pose=True) -> None:
 
         super().__init__()
         self.gnn_recursion = gnn_recursion
         self.droprate = droprate
         self.pose_proj_dim = pose_proj_dim
+        self.rel_pose = rel_pose
 
         # setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
@@ -153,10 +155,11 @@ class GCNet(nn.Module):
             node_feat_dim, node_feat_dim, edge_feat_dim + pose_proj_dim, edge_feat_dim)
 
         # setup the relative pose regression networks
-        self.edge_R = nn.Conv2d(node_feat_dim, node_feat_dim,
-                                kernel_size=3, stride=1, padding=0)
-        self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
-        self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
+        if self.rel_pose:
+            self.edge_R = nn.Conv2d(node_feat_dim, node_feat_dim,
+                                    kernel_size=3, stride=1, padding=0)
+            self.fc_xyz_R = nn.Linear(node_feat_dim, 3)
+            self.fc_wpqr_R = nn.Linear(node_feat_dim, 3)
 
         # setup the hand-eye regression networks
         self.edge_he = nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim,
@@ -210,10 +213,14 @@ class GCNet(nn.Module):
                 edge_feat, p=self.droprate, training=self.training)
 
         # Predict the relative pose between images
-        edge_R_feat = F.relu(self.edge_R(edge_feat), inplace=True)
-        edge_R_feat = F.adaptive_avg_pool2d(edge_R_feat, 1).squeeze()
-        xyz_R = self.fc_xyz_R(edge_R_feat)
-        wpqr_R = self.fc_wpqr_R(edge_R_feat)
+        if self.rel_pose:
+            edge_R_feat = F.relu(self.edge_R(edge_feat), inplace=True)
+            edge_R_feat = F.adaptive_avg_pool2d(edge_R_feat, 1).squeeze()
+            xyz_R = self.fc_xyz_R(edge_R_feat)
+            wpqr_R = self.fc_wpqr_R(edge_R_feat)
+            rel_pose_out = torch.cat((xyz_R, wpqr_R), 1)
+        else:
+            rel_pose_out = None
 
         # Process edge features for regressing hand-eye parameters
         edge_he_feat = F.relu(self.edge_he(
@@ -234,4 +241,4 @@ class GCNet(nn.Module):
         xyz_he = self.fc_xyz_he(edge_he_aggr)
         wpqr_he = self.fc_wpqr_he(edge_he_aggr)
 
-        return torch.cat((xyz_he, wpqr_he), 1), torch.cat((xyz_R, wpqr_R), 1), edge_index
+        return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index
