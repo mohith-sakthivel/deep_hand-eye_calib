@@ -159,17 +159,34 @@ class GCNet(nn.Module):
 
         # setup the relative pose regression networks
         if self.rel_pose:
-            self.edge_R = nn.Conv2d(edge_feat_dim, edge_feat_dim,
-                                    kernel_size=3, stride=1, padding=0)
-            self.fc_xyz_R = nn.Linear(edge_feat_dim, 3)
-            self.fc_wpqr_R = nn.Linear(edge_feat_dim, 3)
+            self.edge_R = nn.Sequential(
+                nn.Conv2d(edge_feat_dim, edge_feat_dim // 2,
+                          kernel_size=3, stride=1, padding=0),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(edge_feat_dim // 2, edge_feat_dim // 2,
+                          kernel_size=3, stride=1, padding=0),
+                nn.ReLU(inplace=True)
+            )
+            self.fc_xyz_R = nn.Conv2d(edge_feat_dim // 2, 3,
+                                      kernel_size=3, stride=1, padding=0)
+            self.fc_wpqr_R = nn.Conv2d(edge_feat_dim // 2, 3,
+                                       kernel_size=3, stride=1, padding=0)
 
         # setup the hand-eye regression networks
-        self.edge_he = nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim,
-                                 kernel_size=3, stride=1, padding=0)
-        self.edge_attn_he = nn.Linear(edge_feat_dim, 1)
-        self.fc_xyz_he = nn.Linear(edge_feat_dim, 3)
-        self.fc_wpqr_he = nn.Linear(edge_feat_dim, 3)
+        self.edge_he = nn.Sequential(
+            nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim //
+                      2, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(edge_feat_dim // 2, edge_feat_dim //
+                      2, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True)
+        )
+        self.edge_attn_he = nn.Conv2d(edge_feat_dim // 2, 1,
+                                      kernel_size=3, stride=1, padding=0)
+        self.fc_xyz_he = nn.Conv2d(edge_feat_dim // 2, 3,
+                                   kernel_size=3, stride=1, padding=0)
+        self.fc_wpqr_he = nn.Conv2d(edge_feat_dim // 2, 3,
+                                    kernel_size=3, stride=1, padding=0)
 
         init_modules = [self.proj_init_edge, self.gnn_layer,
                         self.fc_xyz_R, self.fc_wpqr_R]
@@ -217,18 +234,16 @@ class GCNet(nn.Module):
 
         # Predict the relative pose between images
         if self.rel_pose:
-            edge_R_feat = F.relu(self.edge_R(edge_feat), inplace=True)
-            edge_R_feat = F.adaptive_avg_pool2d(edge_R_feat, 1).squeeze()
-            xyz_R = self.fc_xyz_R(edge_R_feat)
-            wpqr_R = self.fc_wpqr_R(edge_R_feat)
+            edge_R_feat = self.edge_R(edge_feat)
+            xyz_R = self.fc_xyz_R(edge_R_feat).squeeze()
+            wpqr_R = self.fc_wpqr_R(edge_R_feat).squeeze()
             rel_pose_out = torch.cat((xyz_R, wpqr_R), 1)
         else:
             rel_pose_out = None
 
         # Process edge features for regressing hand-eye parameters
-        edge_he_feat = F.relu(self.edge_he(
-            torch.cat([edge_feat, rel_disp_feat], dim=-3)), inplace=True)
-        edge_he_feat = F.adaptive_avg_pool2d(edge_he_feat, 1).squeeze()
+        edge_he_feat = self.edge_he(
+            torch.cat([edge_feat, rel_disp_feat], dim=-3))
         # Calculate the attention weight over the edges
         edge_he_logits = self.edge_attn_he(
             edge_he_feat).squeeze().repeat(data.num_graphs, 1)
@@ -238,10 +253,13 @@ class GCNet(nn.Module):
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
         # Apply attention
-        edge_he_aggr = torch.matmul(edge_he_attn, edge_he_feat)
+        num_edges, feat_shape = edge_he_feat.shape[0], edge_he_feat.shape[1:]
+        edge_he_aggr = torch.matmul(
+            edge_he_attn, edge_he_feat.view(num_edges, -1))
+        edge_he_aggr = edge_he_aggr.view(data.num_graphs, *feat_shape)
 
         # Predict the hand-eye parameters
-        xyz_he = self.fc_xyz_he(edge_he_aggr)
-        wpqr_he = self.fc_wpqr_he(edge_he_aggr)
+        xyz_he = self.fc_xyz_he(edge_he_aggr).squeeze()
+        wpqr_he = self.fc_wpqr_he(edge_he_aggr).squeeze()
 
         return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index
