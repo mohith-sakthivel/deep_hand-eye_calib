@@ -140,18 +140,19 @@ class MLPGCNet(nn.Module):
 
         # Setup the relative pose regression networks
         if self.rel_pose:
-            self.fc_xyz_R = nn.Linear(edge_feat_dim, 3)
-            self.fc_wpqr_R = nn.Linear(edge_feat_dim, 3)
+            self.xyz_R = nn.Linear(edge_feat_dim, 3)
+            self.wpqr_R = nn.Linear(edge_feat_dim, 3)
 
         # Setup the hand-eye regression networks
         self.edge_he = nn.Linear(edge_feat_dim + pose_proj_dim, edge_feat_dim)
         self.edge_attn_he = nn.Linear(edge_feat_dim, 1)
-        self.fc_xyz_he = nn.Linear(edge_feat_dim, 3)
-        self.fc_wpqr_he = nn.Linear(edge_feat_dim, 3)
+        self.xyz_he = nn.Linear(edge_feat_dim, 3)
+        self.wpqr_he = nn.Linear(edge_feat_dim, 3)
 
         init_modules = [self.feature_extractor.fc,
                         self.proj_init_edge, self.gnn_layer,
-                        self.fc_xyz_R, self.fc_wpqr_R]
+                        self.xyz_R, self.wpqr_R,
+                        self.edge_he, self.edge_attn_he, self.xyz_he, self.wpqr_he]
 
         for m in init_modules:
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -191,8 +192,8 @@ class MLPGCNet(nn.Module):
 
         # Predict the relative pose between images
         if self.rel_pose:
-            xyz_R = self.fc_xyz_R(edge_feat)
-            wpqr_R = self.fc_wpqr_R(edge_feat)
+            xyz_R = self.xyz_R(edge_feat)
+            wpqr_R = self.wpqr_R(edge_feat)
             rel_pose_out = torch.cat((xyz_R, wpqr_R), 1)
         else:
             rel_pose_out = None
@@ -212,7 +213,7 @@ class MLPGCNet(nn.Module):
         edge_he_aggr = torch.matmul(edge_he_attn, edge_he_feat)
 
         # Predict the hand-eye parameters
-        xyz_he = self.fc_xyz_he(edge_he_aggr)
-        wpqr_he = self.fc_wpqr_he(edge_he_aggr)
+        xyz_he = self.xyz_he(edge_he_aggr)
+        wpqr_he = self.wpqr_he(edge_he_aggr)
 
         return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index

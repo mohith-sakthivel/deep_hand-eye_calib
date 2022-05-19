@@ -167,29 +167,31 @@ class GCNet(nn.Module):
                           kernel_size=3, stride=1, padding=0),
                 nn.ReLU(inplace=True)
             )
-            self.fc_xyz_R = nn.Conv2d(edge_feat_dim // 2, 3,
-                                      kernel_size=3, stride=1, padding=0)
-            self.fc_wpqr_R = nn.Conv2d(edge_feat_dim // 2, 3,
-                                       kernel_size=3, stride=1, padding=0)
+            self.xyz_R = nn.Conv2d(edge_feat_dim // 2, 3,
+                                   kernel_size=3, stride=1, padding=0)
+            self.wpqr_R = nn.Conv2d(edge_feat_dim // 2, 3,
+                                    kernel_size=3, stride=1, padding=0)
 
         # setup the hand-eye regression networks
         self.edge_he = nn.Sequential(
-            nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim //
-                      2, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True),
-            nn.Conv2d(edge_feat_dim // 2, edge_feat_dim //
-                      2, kernel_size=3, stride=1, padding=0),
+            nn.Conv2d(edge_feat_dim // 2, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True)
         )
         self.edge_attn_he = nn.Conv2d(edge_feat_dim // 2, 1,
                                       kernel_size=3, stride=1, padding=0)
-        self.fc_xyz_he = nn.Conv2d(edge_feat_dim // 2, 3,
-                                   kernel_size=3, stride=1, padding=0)
-        self.fc_wpqr_he = nn.Conv2d(edge_feat_dim // 2, 3,
-                                    kernel_size=3, stride=1, padding=0)
+        self.xyz_he = nn.Conv2d(edge_feat_dim // 2, 3,
+                                kernel_size=3, stride=1, padding=0)
+        self.wpqr_he = nn.Conv2d(edge_feat_dim // 2, 3,
+                                 kernel_size=3, stride=1, padding=0)
 
-        init_modules = [self.proj_init_edge, self.gnn_layer,
-                        self.fc_xyz_R, self.fc_wpqr_R]
+        init_modules = [self.proj_rel_disp, self.process_feat,
+                        self.proj_init_edge, self.gnn_layer,
+                        self.edge_R, self.xyz_R, self.wpqr_R,
+                        self.edge_he, self.edge_attn_he, self.xyz_he, self.wpqr_he]
 
         for m in init_modules:
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -235,8 +237,8 @@ class GCNet(nn.Module):
         # Predict the relative pose between images
         if self.rel_pose:
             edge_R_feat = self.edge_R(edge_feat)
-            xyz_R = self.fc_xyz_R(edge_R_feat).squeeze()
-            wpqr_R = self.fc_wpqr_R(edge_R_feat).squeeze()
+            xyz_R = self.xyz_R(edge_R_feat).squeeze()
+            wpqr_R = self.wpqr_R(edge_R_feat).squeeze()
             rel_pose_out = torch.cat((xyz_R, wpqr_R), 1)
         else:
             rel_pose_out = None
@@ -259,7 +261,7 @@ class GCNet(nn.Module):
         edge_he_aggr = edge_he_aggr.view(data.num_graphs, *feat_shape)
 
         # Predict the hand-eye parameters
-        xyz_he = self.fc_xyz_he(edge_he_aggr).squeeze()
-        wpqr_he = self.fc_wpqr_he(edge_he_aggr).squeeze()
+        xyz_he = self.xyz_he(edge_he_aggr).squeeze()
+        wpqr_he = self.wpqr_he(edge_he_aggr).squeeze()
 
         return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index
