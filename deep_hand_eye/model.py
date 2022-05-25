@@ -174,7 +174,7 @@ class GCNet(nn.Module):
 
         # setup the hand-eye regression networks
         self.edge_he = nn.Sequential(
-            nn.Conv2d(edge_feat_dim + pose_proj_dim, edge_feat_dim // 2,
+            nn.Conv2d(edge_feat_dim + pose_proj_dim + 2 * node_feat_dim, edge_feat_dim // 2,
                       kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True),
             nn.Conv2d(edge_feat_dim // 2, edge_feat_dim // 2,
@@ -199,13 +199,13 @@ class GCNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0)
 
-    def join_node_edge_feat(self, node_feat, edge_index, edge_feat):
+    def join_node_edge_feat(self, node_feat, edge_index, edge_feat_list):
         # join node features of a corresponding edge
         # introduce invariance to edge direction (?)
         out_feat = torch.cat(
             (node_feat[edge_index[0], ...],
              node_feat[edge_index[1], ...],
-             edge_feat), dim=1)
+             *edge_feat_list), dim=-3)
         return out_feat
 
     def forward(self, data):
@@ -218,7 +218,7 @@ class GCNet(nn.Module):
         rel_disp_shape, x_shape = rel_disp_feat.shape, x.shape
         rel_disp_feat = rel_disp_feat.view(
             *rel_disp_shape, 1, 1).expand(*rel_disp_shape, *x_shape[-2:])
-        edge_node_feat = self.join_node_edge_feat(x, edge_index, rel_disp_feat)
+        edge_node_feat = self.join_node_edge_feat(x, edge_index, [rel_disp_feat])
         edge_feat = F.relu(self.proj_init_edge(edge_node_feat), inplace=True)
 
         # Graph message passing step
@@ -244,8 +244,8 @@ class GCNet(nn.Module):
             rel_pose_out = None
 
         # Process edge features for regressing hand-eye parameters
-        edge_he_feat = self.edge_he(
-            torch.cat([edge_feat, rel_disp_feat], dim=-3))
+        graph_feat = self.join_node_edge_feat(x, edge_index, [edge_feat, rel_disp_feat])
+        edge_he_feat = self.edge_he(graph_feat)
         # Calculate the attention weight over the edges
         edge_he_logits = self.edge_attn_he(
             edge_he_feat).squeeze().repeat(data.num_graphs, 1)
