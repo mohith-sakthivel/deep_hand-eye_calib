@@ -1,6 +1,7 @@
 from typing import Type, Any, Union, List
 
 import torch
+import torch.nn.functional as F
 
 from torchvision._internally_replaced_utils import load_state_dict_from_url
 from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck, _resnet, model_urls
@@ -13,7 +14,7 @@ class ConvOutResNet(ResNet):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
+        x = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
 
         x = self.layer1(x)
         x = self.layer2(x)
