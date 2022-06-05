@@ -1,7 +1,8 @@
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch_geometric.nn import MessagePassing
 
 from deep_hand_eye.resnet import resnet34
@@ -141,6 +142,7 @@ class GCNet(nn.Module):
         self.droprate = droprate
         self.pose_proj_dim = pose_proj_dim
         self.rel_pose = rel_pose
+        self.edge_feat_dim = edge_feat_dim
 
         # setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
@@ -172,8 +174,8 @@ class GCNet(nn.Module):
             self.wpqr_R = nn.Conv2d(edge_feat_dim // 2, 3,
                                     kernel_size=3, stride=1, padding=0)
 
-        # setup the hand-eye regression networks
-        self.edge_he = nn.Sequential(
+        # setup self-attention
+        self.V_net = nn.Sequential(
             nn.Conv2d(edge_feat_dim + pose_proj_dim + 2 * node_feat_dim, edge_feat_dim // 2,
                       kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True),
@@ -181,6 +183,25 @@ class GCNet(nn.Module):
                       kernel_size=3, stride=1, padding=0),
             nn.ReLU(inplace=True)
         )
+
+        self.K_net = nn.Sequential(
+            nn.Conv2d(edge_feat_dim + pose_proj_dim + 2 * node_feat_dim, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(edge_feat_dim // 2, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True)
+        )
+
+        self.Q_net = nn.Sequential(
+            nn.Conv2d(edge_feat_dim + pose_proj_dim + 2 * node_feat_dim, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(edge_feat_dim // 2, edge_feat_dim // 2,
+                      kernel_size=3, stride=1, padding=0),
+            nn.ReLU(inplace=True)
+        )
+
         self.edge_attn_he = nn.Conv2d(edge_feat_dim // 2, 1,
                                       kernel_size=3, stride=1, padding=0)
         self.xyz_he = nn.Conv2d(edge_feat_dim // 2, 3,
@@ -191,7 +212,8 @@ class GCNet(nn.Module):
         init_modules = [self.proj_rel_disp, self.process_feat,
                         self.proj_init_edge, self.gnn_layer,
                         self.edge_R, self.xyz_R, self.wpqr_R,
-                        self.edge_he, self.edge_attn_he, self.xyz_he, self.wpqr_he]
+                        self.Q_net, self.K_net, self.V_net,
+                        self.edge_attn_he, self.xyz_he, self.wpqr_he]
 
         for m in init_modules:
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -244,20 +266,28 @@ class GCNet(nn.Module):
             rel_pose_out = None
 
         # Process edge features for regressing hand-eye parameters
+        edge_per_graph = len(edge_feat) // data.num_graphs 
         graph_feat = self.join_node_edge_feat(x, edge_index, [edge_feat, rel_disp_feat])
-        edge_he_feat = self.edge_he(graph_feat)
+
+        edge_he_K = self.K_net(graph_feat).reshape(data.num_graphs, edge_per_graph, -1)
+        edge_he_Q = self.Q_net(graph_feat).reshape(data.num_graphs, edge_per_graph, -1)
+        edge_he_V = self.V_net(graph_feat).reshape(data.num_graphs, edge_per_graph, -1)
+
+        attn = F.softmax(torch.matmul(edge_he_Q, edge_he_K.permute(0, -1, -2)) / np.sqrt(2 * (self.edge_feat_dim // 2)), dim=-1)
+        attn_edge_he_feat = torch.matmul(attn, edge_he_V).reshape(data.num_graphs * edge_per_graph, self.edge_feat_dim //2, 3, 3)
+
         # Calculate the attention weight over the edges
         edge_he_logits = self.edge_attn_he(
-            edge_he_feat).squeeze().repeat(data.num_graphs, 1)
+            attn_edge_he_feat).squeeze().repeat(data.num_graphs, 1)
         edge_graph_ids = data.batch[data.edge_index[0].cpu().numpy()]
         num_graphs = torch.arange(
             0, data.num_graphs).view(-1, 1).to(edge_graph_ids.device)
         edge_he_logits[num_graphs != edge_graph_ids] = -torch.inf
         edge_he_attn = F.softmax(edge_he_logits, dim=-1)
         # Apply attention
-        num_edges, feat_shape = edge_he_feat.shape[0], edge_he_feat.shape[1:]
+        num_edges, feat_shape = attn_edge_he_feat.shape[0], attn_edge_he_feat.shape[1:]
         edge_he_aggr = torch.matmul(
-            edge_he_attn, edge_he_feat.view(num_edges, -1))
+            edge_he_attn, attn_edge_he_feat.view(num_edges, -1))
         edge_he_aggr = edge_he_aggr.view(data.num_graphs, *feat_shape)
 
         # Predict the hand-eye parameters
