@@ -14,7 +14,7 @@ class ConvOutResNet(ResNet):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
+        # x = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
 
         x = self.layer1(x)
         x = self.layer2(x)

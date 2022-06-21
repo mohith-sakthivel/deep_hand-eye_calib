@@ -226,6 +226,44 @@ class EdgeSelfAttention(nn.Module):
         return torch.concat(output, dim=0)
 
 
+class SPPNet(nn.Module):
+
+    def __init__(self, in_channels):
+        super().__init__()
+
+        self.branch_1 = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels // 2, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+
+        self.branch_2 = nn.Sequential(
+            nn.AvgPool2d(2),
+            nn.Conv2d(in_channels, in_channels // 2, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+
+        self.branch_3 = nn.Sequential(
+            nn.AvgPool2d(4),
+            nn.Conv2d(in_channels, in_channels // 2, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+
+        self.last_conv = nn.Sequential(
+            nn.Conv2d(3 * (in_channels // 2), in_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels, in_channels, 3, padding=1)
+        )
+
+    def forward(self, x):
+        out_1 = self.branch_1(x)
+        out_2 = F.interpolate(self.branch_2(x), out_1.shape[-1], mode='bilinear')
+        out_3 = F.interpolate(self.branch_3(x), out_1.shape[-1], mode='bilinear')
+
+        out = torch.cat([out_1, out_2, out_3], dim=-3)
+        out = self.last_conv(out)
+        return out
+
+
 class GCNet(nn.Module):
 
     def __init__(self, node_feat_dim=512, edge_feat_dim=512,
@@ -241,13 +279,7 @@ class GCNet(nn.Module):
 
         # Setup the feature extractor
         self.feature_extractor = resnet34(pretrained=True)
-        self.process_feat = nn.Conv2d(
-            in_channels=512,
-            out_channels=node_feat_dim,
-            kernel_size=3,
-            stride=1,
-            padding=1
-        )
+        self.process_feat = SPPNet(512)
 
         # Project relative robot displacement
         self.proj_rel_disp = nn.Linear(6, self.pose_proj_dim)
@@ -283,12 +315,12 @@ class GCNet(nn.Module):
             self.xyz_R = nn.Conv2d(
                 in_channels=edge_feat_dim // 2,
                 out_channels=3,
-                kernel_size=3
+                kernel_size=4
             )
             self.wpqr_R = nn.Conv2d(
                 in_channels=edge_feat_dim // 2,
                 out_channels=3,
-                kernel_size=3
+                kernel_size=4
             )
 
         # Setup the hand-eye pose regression networks
@@ -302,7 +334,7 @@ class GCNet(nn.Module):
         self.edge_attn_he = nn.Conv2d(
             in_channels=edge_feat_dim // 2,
             out_channels=1,
-            kernel_size=3,
+            kernel_size=4,
             stride=1,
             padding=0
         )
@@ -311,12 +343,12 @@ class GCNet(nn.Module):
         self.xyz_he = nn.Conv2d(
             in_channels=edge_feat_dim // 2,
             out_channels=3,
-            kernel_size=3
+            kernel_size=4
         )
         self.wpqr_he = nn.Conv2d(
             in_channels=edge_feat_dim // 2,
             out_channels=3,
-            kernel_size=3
+            kernel_size=4
         )
 
         # Initialize networks
@@ -365,6 +397,10 @@ class GCNet(nn.Module):
             edge_feat = F.dropout(
                 edge_feat, p=self.droprate, training=self.training)
 
+        edge_feat = F.avg_pool2d(edge_feat, 2)
+        x = F.avg_pool2d(x, 2)
+        rel_disp_feat = F.avg_pool2d(rel_disp_feat, 2)
+
         # Predict the relative pose between images
         if self.rel_pose:
             edge_R_feat = self.edge_R(edge_feat)
@@ -393,7 +429,7 @@ class GCNet(nn.Module):
         edge_he_aggr = edge_he_aggr.view(data.num_graphs, *feat_shape)
 
         # Predict the hand-eye parameters
-        xyz_he = self.xyz_he(edge_he_aggr).squeeze()
-        wpqr_he = self.wpqr_he(edge_he_aggr).squeeze()
+        xyz_he = self.xyz_he(edge_he_aggr).view(data.num_graphs, -1)
+        wpqr_he = self.wpqr_he(edge_he_aggr).view(data.num_graphs, -1)
 
         return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index
