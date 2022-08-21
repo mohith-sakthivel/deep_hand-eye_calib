@@ -1,23 +1,32 @@
-import json
 import os
+import json
 import torch
 import random
 import numpy as np
-import torchvision.transforms as transforms
-from torch_geometric.data import Data
+from tqdm import tqdm
 from PIL import Image
 from glob import glob
+from typing import List, Optional, Tuple
 from scipy.spatial.transform import Rotation as R
+
 from torch.utils.data import Dataset
-from tqdm import tqdm
+from torch_geometric.data import Data
+import torchvision.transforms as transforms
 
 import deep_hand_eye.pose_utils as p_utils
 
 
 class MVSDataset(Dataset):
-    def __init__(self, image_folder="data/DTU_MVS_2014/Rectified/",
-                 json_file="data/DTU_MVS_2014/camera_pose.json", num_nodes=5,
-                 max_trans_offset=0.3, max_rot_offset=90.0, transform=None, image_size=(224, 224)):
+    def __init__(
+        self,
+        image_folder: str = "data/DTU_MVS_2014/Rectified/",
+        json_file: str = "data/DTU_MVS_2014/camera_pose.json",
+        num_nodes: int = 5,
+        max_trans_offset: float = 0.3,
+        max_rot_offset: float = 90.0,
+        transform: Optional[transforms.Compose] = None,
+        image_size: Tuple = (224, 224)
+    ):
         # Storing the image folder
         self.image_folder = image_folder
 
@@ -41,8 +50,7 @@ class MVSDataset(Dataset):
             self.transform = transforms.Compose([
                 transforms.Resize(image_size),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
         else:
             self.transform = transform
@@ -58,10 +66,10 @@ class MVSDataset(Dataset):
         # Mapping between idx and unique images
         self.idx_to_img_mapping = idx_to_img_map(image_folder)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.idx_to_img_mapping)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Data:
         """
         returns:
             image_list : list of images corresponding to those sampled from the given scene
@@ -75,14 +83,11 @@ class MVSDataset(Dataset):
             vector = np.random.uniform(-1, 1, 3)
             return vector / np.linalg.norm(vector)
 
-        hand_eye_trans = np.random.uniform(
-            0, self.max_trans_offset) * sample_unit_vector()
+        hand_eye_trans = np.random.uniform(0, self.max_trans_offset) * sample_unit_vector()
         # Random rotational angle
-        hand_eye_angle = np.random.uniform(-self.max_rot_offset,
-                                           self.max_rot_offset)
+        hand_eye_angle = np.random.uniform(-self.max_rot_offset, self.max_rot_offset)
         hand_eye_axis = sample_unit_vector()
-        hand_eye_rotation = R.from_rotvec(
-            hand_eye_angle * hand_eye_axis).as_matrix()
+        hand_eye_rotation = R.from_rotvec(hand_eye_angle * hand_eye_axis).as_matrix()
 
         # Hand-eye transformation matrix
         hand_eye_matrix = np.zeros((4, 4))
@@ -190,21 +195,23 @@ class MVSDataset(Dataset):
         hand_eye = torch.from_numpy(hand_eye).unsqueeze(dim=0)
 
         # Create graph to return
-        graph = Data(x=image_list,
-                     edge_index=self.edge_index,
-                     edge_attr=rel_ee_transforms,
-                     y=hand_eye,
-                     y_edge=rel_cam_transforms)
+        graph = Data(
+            x=image_list,
+            edge_index=self.edge_index,
+            edge_attr=rel_ee_transforms,
+            y=hand_eye,
+            y_edge=rel_cam_transforms
+        )
 
         # Return as a dictionary
         return graph
 
 
-def edge_idx_gen(num_nodes):
-    edge_index_top = np.zeros(num_nodes*(num_nodes-1), dtype=np.int64)
+def edge_idx_gen(num_nodes: int) -> torch.Tensor:
     """
     Generates the top and bottom array of edge indices separately and stacks them
     """
+    edge_index_top = np.zeros(num_nodes*(num_nodes-1), dtype=np.int64)
     for i in range(num_nodes):
         edge_index_top[i*(num_nodes-1):(i+1)*(num_nodes-1)] = i
     edge_index_low = np.zeros_like(edge_index_top)
@@ -218,7 +225,7 @@ def edge_idx_gen(num_nodes):
     return edge_index
 
 
-def idx_to_img_map(image_folder):
+def idx_to_img_map(image_folder: str) -> List[Tuple[int, int]]:
     """
     Generates the unique mapping between every idx and the folder-image name index
     """

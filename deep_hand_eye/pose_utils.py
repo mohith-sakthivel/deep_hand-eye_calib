@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -21,12 +22,11 @@ def qlog(q):
     :param q: (4,)
     :return: (3,)
     """
-    s = q.shape
 
-    if all(q[..., 1:] == 0):
-        q = np.zeros([3])
-    else:
-        q = np.arccos(q[0]) * q[1:] / np.linalg.norm(q[1:])
+    if isinstance(q, np.ndarray):
+        q = np.arccos(q[..., 0:1]) * q[..., 1:] / np.linalg.norm(q[..., 1:], axis=-1, keepdims=True)
+    elif isinstance(q, torch.Tensor):
+        q = torch.arccos(q[..., 0:1]) * q[..., 1:] / torch.linalg.norm(q[..., 1:], dim=-1, keepdims=True)
     return q
 
 def qexp(q):
@@ -35,8 +35,13 @@ def qexp(q):
     :param q: (3,)
     :return: (4,)
     """
-    n = np.linalg.norm(q)
-    q = np.hstack((np.cos(n), np.sinc(n / np.pi) * q))
+    if isinstance(q, np.ndarray):
+        n = np.linalg.norm(q, axis=-1, keepdims=True)
+        q = np.hstack((np.cos(n), np.sinc(n / np.pi) * q))
+    elif isinstance(q, torch.Tensor):
+        n = torch.linalg.norm(q, dim=-1, keepdims=True)
+        q = torch.hstack((torch.cos(n), torch.sinc(n / torch.pi) * q))
+
     return q
     
 
