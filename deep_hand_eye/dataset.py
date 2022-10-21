@@ -25,10 +25,12 @@ class MVSDataset(Dataset):
         max_trans_offset: float = 0.3,
         max_rot_offset: float = 90.0,
         transform: Optional[transforms.Compose] = None,
-        image_size: Tuple = (224, 224)
+        image_size: Tuple = (224, 224),
+        get_raw_images: bool = False
     ):
-        # Storing the image folder
+
         self.image_folder = image_folder
+        self.get_raw_images = get_raw_images
 
         # Initialize idx used to loop through the folders
         self.folder_idx = 0
@@ -128,15 +130,19 @@ class MVSDataset(Dataset):
                 index_list.append(index)
                 loop_var += 1
 
-        # For each sampled index, get the image and append as a tensor
-        for idx in index_list:
-            # +1 because the dataset is 1-base rather than 0-base like Python indexing
-            img_id = f'{idx+1:0>3}'
-            file_name = folder + img_format.format(img_id)
-            image = Image.open(file_name).convert('RGB')
-            image = self.transform(image)
-            image_list.append(image)
-        image_list = torch.stack(image_list)
+        extras = {}
+        if self.get_raw_images:
+            extras["raw_images"] = []
+            # For each sampled index, get the image and append as a tensor
+            for idx in index_list:
+                # +1 because the dataset is 1-base rather than 0-base like Python indexing
+                img_id = f'{idx+1:0>3}'
+                file_name = folder + img_format.format(img_id)
+                image = Image.open(file_name).convert('RGB')
+                extras["raw_images"] .append(np.asarray(image))
+                transformed_image = self.transform(image)
+                image_list.append(transformed_image)
+            image_list = torch.stack(image_list)
 
         # Initialize table for all relative transforms
         rel_ee_transforms = np.zeros(
@@ -200,7 +206,8 @@ class MVSDataset(Dataset):
             edge_index=self.edge_index,
             edge_attr=rel_ee_transforms,
             y=hand_eye,
-            y_edge=rel_cam_transforms
+            y_edge=rel_cam_transforms,
+            **extras
         )
 
         # Return as a dictionary
