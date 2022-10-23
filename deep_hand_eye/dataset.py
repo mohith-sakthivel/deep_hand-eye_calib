@@ -133,16 +133,21 @@ class MVSDataset(Dataset):
         extras = {}
         if self.get_raw_images:
             extras["raw_images"] = []
-            # For each sampled index, get the image and append as a tensor
-            for idx in index_list:
-                # +1 because the dataset is 1-base rather than 0-base like Python indexing
-                img_id = f'{idx+1:0>3}'
-                file_name = folder + img_format.format(img_id)
-                image = Image.open(file_name).convert('RGB')
-                extras["raw_images"] .append(np.asarray(image))
-                transformed_image = self.transform(image)
-                image_list.append(transformed_image)
-            image_list = torch.stack(image_list)
+        
+        # For each sampled index, get the image and append as a tensor
+        for idx in index_list:
+            # +1 because the dataset is 1-base rather than 0-base like Python indexing
+            img_id = f'{idx+1:0>3}'
+            file_name = folder + img_format.format(img_id)
+            image = Image.open(file_name).convert('RGB')
+            if self.get_raw_images:
+                extras["raw_images"].append(np.asarray(image))
+            transformed_image = self.transform(image)
+            image_list.append(transformed_image)
+        
+        image_list = torch.stack(image_list)
+        if self.get_raw_images:
+            extras["raw_images"] = np.stack(extras["raw_images"], axis=0)
 
         # Initialize table for all relative transforms
         rel_ee_transforms = np.zeros(

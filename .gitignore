@@ -3,5 +3,6 @@ docs/
 runs/
 models/
 ref_runs/
+eval/
 
 __pycache__
