@@ -63,9 +63,17 @@ class Trainer(object):
             log_dir=self.config.log_dir / self.config.model_name / self.run_id)
 
         # Setup Dataset
-        self.train_dataset = MVSDataset()
+        self.train_dataset = MVSDataset(image_folder="data/DTU_MVS_2014/Rectified/train/")
         self.train_dataloader = DataLoader(
             dataset=self.train_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            num_workers=self.config.num_workers
+        )
+
+        self.test_dataset = MVSDataset(image_folder="data/DTU_MVS_2014/Rectified/test/")
+        self.test_dataloader = DataLoader(
+            dataset=self.test_dataset,
             batch_size=self.config.batch_size,
             shuffle=True,
             num_workers=self.config.num_workers
@@ -148,7 +156,7 @@ class Trainer(object):
 
                 if iter_no % self.config.eval_freq == 0:
                     self.eval(
-                        dataloader=self.train_dataloader,
+                        dataloader=self.test_dataloader,
                         iter_no=iter_no,
                         eval_rel_pose=self.config.rel_pose_coeff is not None
                     )
@@ -217,24 +225,33 @@ class Trainer(object):
         median_q_he = np.median(q_loss_he)
         mean_t_he = np.mean(t_loss_he)
         mean_q_he = np.mean(q_loss_he)
+        max_t_he = np.max(t_loss_he)
+        max_q_he = np.max(q_loss_he)
 
-        print(f'Iter No [{iter_no:04d}] Error in translation:'
-              f' median {median_t_he:3.2f} m,'
-              f' mean {mean_t_he:3.2f} m'
-              f'\tError in rotation:'
-              f' median {median_q_he:3.2f} degrees,'
-              f' mean {mean_q_he:3.2f} degrees')
+        print(f'Iter No [{iter_no:04d}] \n'
+              f'Error in translation: \n'
+              f'\t median {median_t_he:3.2f} m \n'
+              f'\t mean {mean_t_he:3.2f} m \n'
+              f'\t max {max_t_he:3.2f} m \n'
+              f'Error in rotation: \n'
+              f'\t median {median_q_he:3.2f} degrees \n'
+              f'\t mean {mean_q_he:3.2f} degrees \n'
+              f'\t max {max_q_he:3.2f} degrees \n')
 
         self.tb_writer.add_scalar("test/he_trans_median", median_t_he, iter_no)
         self.tb_writer.add_scalar("test/he_trans_mean", mean_t_he, iter_no)
+        self.tb_writer.add_scalar("test/he_trans_max", max_t_he, iter_no)
         self.tb_writer.add_scalar("test/he_rot_median", median_q_he, iter_no)
         self.tb_writer.add_scalar("test/he_rot_mean", mean_q_he, iter_no)
+        self.tb_writer.add_scalar("test/he_rot_max", max_q_he, iter_no)
 
         if eval_rel_pose:
-            self.tb_writer.add_scalar("test/rel_trans_medain", np.median(t_loss_R), iter_no)
+            self.tb_writer.add_scalar("test/rel_trans_median", np.median(t_loss_R), iter_no)
             self.tb_writer.add_scalar("test/rel_trans_mean", np.mean(t_loss_R), iter_no)
+            self.tb_writer.add_scalar("test/rel_trans_max", np.max(t_loss_R), iter_no)
             self.tb_writer.add_scalar("test/rel_rot_median", np.median(q_loss_R), iter_no)
             self.tb_writer.add_scalar("test/rel_rot_mean", np.mean(q_loss_R), iter_no)
+            self.tb_writer.add_scalar("test/rel_rot_max", np.max(q_loss_R), iter_no)
 
     def save_model(self):
         save_dir = self.config.model_save_dir / self.config.model_name / self.run_id

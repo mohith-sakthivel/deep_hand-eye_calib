@@ -393,7 +393,7 @@ class GCNet(nn.Module):
         edge_he_aggr = edge_he_aggr.view(data.num_graphs, *feat_shape)
 
         # Predict the hand-eye parameters
-        xyz_he = self.xyz_he(edge_he_aggr).squeeze()
-        wpqr_he = self.wpqr_he(edge_he_aggr).squeeze()
+        xyz_he = self.xyz_he(edge_he_aggr).reshape(-1, 3)
+        wpqr_he = self.wpqr_he(edge_he_aggr).reshape(-1, 3)
 
         return torch.cat((xyz_he, wpqr_he), 1), rel_pose_out, edge_index

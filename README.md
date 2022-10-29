@@ -6,6 +6,9 @@ parameters by directly making sense of the visual features present in the images
 
 For more details, visit the [project website](https://sites.google.com/andrew.cmu.edu/deep-hand-eye-calibration).
 
+## Note
+- The quaternion convention followed in this repository is (w, x, y, z)
+
 # Setup
 
 To setup the environment
